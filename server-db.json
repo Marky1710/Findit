@@ -1,0 +1,62 @@
+{
+  "users": [
+    {
+      "id": "user-admin-mayur",
+      "name": "Mayur Suryavanshi",
+      "studentId": "IYC-ADMIN-01",
+      "designation": "Campus System Administrator",
+      "department": "Administration & Campus Operations",
+      "role": "admin",
+      "email": "suryavanshimayur187@gmail.com",
+      "phone": "+91 98765 43210",
+      "password": "admin123",
+      "createdAt": "2026-08-01"
+    }
+  ],
+  "items": [],
+  "claims": [],
+  "messages": [],
+  "activities": [
+    {
+      "id": "act-1789553497562",
+      "userId": "user-admin-mayur",
+      "title": "Report Soft-Deleted by Admin",
+      "description": "Admin Mayur Suryavanshi soft-deleted LOST listing \"Casio FX-991EX Scientific Calculator\" (ID: test-verif-calculator).",
+      "timestamp": "2026-09-16T10:11:37.562Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789553479126",
+      "userId": "user-admin-mayur",
+      "title": "Report Soft-Deleted by Admin",
+      "description": "Admin Mayur Suryavanshi soft-deleted LOST listing \"Casio FX-991EX Scientific Calculator\" (ID: test-verif-calculator).",
+      "timestamp": "2026-09-16T10:11:19.126Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789553307482",
+      "userId": "user-admin-mayur",
+      "title": "Report Soft-Deleted by Admin",
+      "description": "Admin Mayur Suryavanshi soft-deleted LOST listing \"Test Blue Scientific Calculator\" (ID: test-item-1).",
+      "timestamp": "2026-09-16T10:08:27.482Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789553307472",
+      "userId": "user-admin-mayur",
+      "title": "Report Restored by Admin",
+      "description": "Admin Mayur Suryavanshi restored LOST listing \"Test Blue Scientific Calculator\" (ID: test-item-1) to active status.",
+      "timestamp": "2026-09-16T10:08:27.472Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789553307459",
+      "userId": "user-admin-mayur",
+      "title": "Report Soft-Deleted by Admin",
+      "description": "Admin Mayur Suryavanshi soft-deleted LOST listing \"Test Blue Scientific Calculator\" (ID: test-item-1).",
+      "timestamp": "2026-09-16T10:08:27.459Z",
+      "type": "MODERATION"
+    }
+  ],
+  "moderation": []
+}
