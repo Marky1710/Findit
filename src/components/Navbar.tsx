@@ -6,7 +6,6 @@ import {
   Compass, 
   ShieldCheck, 
   User as UserIcon, 
-  Sparkles, 
   Menu, 
   X,
   ChevronDown,
@@ -91,19 +90,6 @@ export const Navbar: React.FC = () => {
                 }`}
               >
                 Browse Items
-              </button>
-
-              <button
-                id="nav-link-matches"
-                onClick={() => setCurrentPage('matches')}
-                className={`px-3 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center space-x-1.5 ${
-                  currentPage === 'matches'
-                    ? 'bg-amber-100 text-amber-950 font-bold ring-1 ring-amber-300'
-                    : 'text-amber-800 bg-amber-50/80 hover:bg-amber-100/80 hover:text-amber-900'
-                }`}
-              >
-                <Sparkles className="w-4 h-4 text-amber-500" />
-                <span>Possible Matches</span>
               </button>
 
               {/* Action buttons available to all visitors */}
@@ -369,13 +355,6 @@ export const Navbar: React.FC = () => {
               className="w-full text-left px-3 py-2.5 rounded-lg text-sm font-semibold text-slate-700 hover:bg-slate-100"
             >
               Browse Items
-            </button>
-            <button
-              onClick={() => { setCurrentPage('matches'); setMobileMenuOpen(false); }}
-              className="w-full text-left px-3 py-2.5 rounded-lg text-sm font-semibold text-amber-900 bg-amber-50 hover:bg-amber-100 flex items-center space-x-2"
-            >
-              <Sparkles className="w-4 h-4 text-amber-600" />
-              <span>Possible Matches</span>
             </button>
             <button
               onClick={() => { setCurrentPage('report-lost'); setMobileMenuOpen(false); }}

@@ -53,6 +53,7 @@ export const OFFICIAL_IYC_COURSES: CourseConfig[] = [
     code: 'BC',
     name: 'B.Com.',
     department: 'Commerce',
+    aliases: ['BCOM', 'BA', 'BB', 'BC', 'COMMERCE'],
     firstYearMaxRoll: 120,
     secondYearMaxRoll: 120,
     thirdYearMaxRoll: 120,
@@ -105,8 +106,11 @@ export const OFFICIAL_IYC_COURSES: CourseConfig[] = [
 export function findCourseByCode(code: string): CourseConfig | undefined {
   if (!code) return undefined;
   const upper = code.trim().toUpperCase();
+  // Exact match first (e.g. 'BA' matches B.A. rather than alias of B.Com)
+  const exact = OFFICIAL_IYC_COURSES.find(c => c.code === upper);
+  if (exact) return exact;
   return OFFICIAL_IYC_COURSES.find(
-    c => c.code === upper || (c.aliases && c.aliases.includes(upper))
+    c => c.aliases && c.aliases.includes(upper)
   );
 }
 

@@ -109,42 +109,39 @@ interface AppContextType {
     itemId: string, 
     proofMessage: string, 
     details?: { studentId?: string; department?: string; phone?: string; }
-  ) => void;
-  approveClaim: (claimId: string, handoverNotes?: string, handoverLocation?: string) => void;
-  rejectClaim: (claimId: string, rejectionReason?: string) => void;
+  ) => Promise<boolean>;
+  approveClaim: (claimId: string, handoverNotes?: string, handoverLocation?: string) => Promise<boolean>;
+  rejectClaim: (claimId: string, rejectionReason?: string) => Promise<boolean>;
   
   // Messaging Operations
   sendMessage: (receiverId: string, itemId: string, text: string) => void;
   markMessageRead: (messageId: string) => void;
   
   // Auth Operations
-  loginStudent: (studentId: string, password?: string) => { success: boolean; error?: string };
-  loginStaff: (identifier: string, password?: string) => { success: boolean; error?: string };
-  loginAdmin: (identifier: string, password?: string) => { success: boolean; error?: string };
+  loginStudent: (studentId: string, password?: string, authenticatedUser?: User) => { success: boolean; error?: string };
+  loginStaff: (identifier: string, password?: string, authenticatedUser?: User) => { success: boolean; error?: string };
+  loginAdmin: (identifier: string, password?: string, authenticatedUser?: User) => { success: boolean; error?: string };
   loginWithStudentId: (studentId: string) => boolean;
-  registerStudent: (studentData: StudentRegistrationInput) => { success: boolean; error?: string; errors?: Record<string, string> };
-  registerStaff: (staffData: { name: string; email: string; department: string; staffId?: string; password?: string; confirmPassword?: string }) => { success: boolean; error?: string };
+  registerStudent: (studentData: StudentRegistrationInput, createdUser?: User) => { success: boolean; error?: string; errors?: Record<string, string> };
+  registerStaff: (staffData: { name: string; email: string; department: string; staffId?: string; password?: string; confirmPassword?: string }, createdUser?: User) => { success: boolean; error?: string };
   registerUser: (userData: { name: string; email: string; studentId: string; phone?: string; department?: string }) => void;
   logout: () => void;
   
   // Admin Operations
   flagItem: (itemId: string, reason: string) => void;
   dismissFlag: (itemId: string) => void;
-  toggleUserBlock: (userId: string) => void;
+  blockUser: (userId: string) => Promise<boolean>;
+  unblockUser: (userId: string) => Promise<boolean>;
+  restrictUser: (userId: string) => Promise<boolean>;
+  unrestrictUser: (userId: string) => Promise<boolean>;
+  deleteUser: (userId: string) => Promise<boolean>;
   resetToDefaultData: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Clean versioned storage keys — strictly starting with empty user-generated data
+// Persistent session key only — backend database is the single source of truth for all entities
 const STORAGE_KEYS = {
-  ITEMS: 'iyc_items_v4',
-  USERS: 'iyc_users_v4',
-  LOCATIONS: 'iyc_locations_v4',
-  MESSAGES: 'iyc_messages_v4',
-  CLAIMS: 'iyc_claims_v4',
-  ACTIVITIES: 'iyc_activities_v4',
-  MODERATION: 'iyc_moderation_v4',
   CURRENT_USER_ID: 'iyc_current_user_v4'
 };
 
@@ -161,129 +158,33 @@ const DEFAULT_FILTERS: BrowseFilters = {
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Purge any old fake data from prior demo storage versions if present
+  // Purge any stale client-side localStorage caches to guarantee backend single source of truth
   useEffect(() => {
     try {
-      const oldKeys = ['iyc_items_v2', 'iyc_items_v3', 'iyc_users_v2', 'iyc_claims_v2', 'iyc_messages_v2'];
-      oldKeys.forEach(k => localStorage.removeItem(k));
+      const staleKeys = [
+        'iyc_items_v2', 'iyc_items_v3', 'iyc_items_v4',
+        'iyc_users_v2', 'iyc_users_v3', 'iyc_users_v4',
+        'iyc_locations_v4',
+        'iyc_messages_v2', 'iyc_messages_v4',
+        'iyc_claims_v2', 'iyc_claims_v4',
+        'iyc_activities_v4',
+        'iyc_moderation_v4'
+      ];
+      staleKeys.forEach(k => localStorage.removeItem(k));
     } catch {
       // Ignore
     }
   }, []);
 
-  // Items start strictly empty unless real items were added by user
-  const [items, setItems] = useState<Item[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.ITEMS);
-      if (saved) {
-        const parsed: Item[] = JSON.parse(saved);
-        // Exclude legacy demo items if any leaked in
-        return parsed.filter(i => !['item-1', 'item-2', 'item-3', 'item-4', 'item-5', 'item-6', 'item-7', 'item-8', 'item-9', 'item-10', 'item-11', 'item-12'].includes(i.id));
-      }
-      return INITIAL_ITEMS; // []
-    } catch {
-      return INITIAL_ITEMS; // []
-    }
-  });
-
-  const [locations, setLocations] = useState<CampusLocation[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.LOCATIONS);
-      return saved ? JSON.parse(saved) : INITIAL_LOCATIONS;
-    } catch {
-      return INITIAL_LOCATIONS;
-    }
-  });
-
-  const [allUsers, setAllUsers] = useState<User[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.USERS);
-      if (saved) {
-        const parsed: User[] = JSON.parse(saved);
-        // Exclude all old seed staff, old demo accounts, old demo students, and Kulkarni
-        const cleaned = parsed.filter(u => {
-          const nameLower = (u.name || '').toLowerCase();
-          const emailLower = (u.email || '').toLowerCase();
-          if (nameLower.includes('kulkarni') || emailLower.includes('kulkarni')) return false;
-          if (['user-bhusan', 'user-mugdha', 'user-prachita', 'user-tamana', 'user-satyam', 'user-priyal', 'user-rohan', 'user-priya', 'user-mayur-demo', 'user-mayur'].includes(u.id)) return false;
-          if (u.role === 'admin' && u.email !== 'suryavanshimayur187@gmail.com' && u.id !== 'user-admin-mayur') return false;
-          // Only preserve Mayur Suryavanshi as initial admin, or newly registered verified users
-          if (u.id === 'user-admin-mayur' || u.email === 'suryavanshimayur187@gmail.com') return true;
-          // Newly registered users must have a valid email and emailVerified
-          if (u.email && u.emailVerified) return true;
-          return false;
-        });
-        
-        // Ensure sole authorized admin Mayur Suryavanshi exists
-        const hasMayur = cleaned.some(u => u.id === 'user-admin-mayur' || u.email === 'suryavanshimayur187@gmail.com');
-        if (!hasMayur) {
-          cleaned.unshift(INITIAL_USERS[0]);
-        }
-        localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(cleaned));
-        return cleaned;
-      }
-      return INITIAL_USERS;
-    } catch {
-      return INITIAL_USERS;
-    }
-  });
-
-  // Public website: No auto-login! Starts as null (Visitor/Guest) unless explicitly signed in
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    try {
-      const savedId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
-      if (!savedId) return null;
-      if (['user-bhusan', 'user-mugdha', 'user-prachita', 'user-tamana', 'user-satyam', 'user-priyal', 'user-rohan', 'user-priya', 'user-mayur-demo', 'user-mayur', 'user-admin-kulkarni'].includes(savedId)) {
-        localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
-        return null;
-      }
-      if (savedId === 'user-admin-mayur') return INITIAL_USERS[0];
-      const savedUsersStr = localStorage.getItem(STORAGE_KEYS.USERS);
-      if (savedUsersStr) {
-        const parsed: User[] = JSON.parse(savedUsersStr);
-        return parsed.find(u => u.id === savedId) || null;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  });
-
-  const [messages, setMessages] = useState<Message[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.MESSAGES);
-      return saved ? JSON.parse(saved) : INITIAL_MESSAGES; // []
-    } catch {
-      return INITIAL_MESSAGES;
-    }
-  });
-
-  const [claims, setClaims] = useState<Claim[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.CLAIMS);
-      return saved ? JSON.parse(saved) : INITIAL_CLAIMS; // []
-    } catch {
-      return INITIAL_CLAIMS;
-    }
-  });
-
-  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.ACTIVITIES);
-      return saved ? JSON.parse(saved) : INITIAL_ACTIVITIES; // []
-    } catch {
-      return INITIAL_ACTIVITIES;
-    }
-  });
-
-  const [moderationReports, setModerationReports] = useState<ModerationReport[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.MODERATION);
-      return saved ? JSON.parse(saved) : INITIAL_MODERATION; // []
-    } catch {
-      return INITIAL_MODERATION;
-    }
-  });
+  // Items start strictly empty and are populated authoritatively from the backend database
+  const [items, setItems] = useState<Item[]>([]);
+  const [locations, setLocations] = useState<CampusLocation[]>(INITIAL_LOCATIONS);
+  const [allUsers, setAllUsers] = useState<User[]>(INITIAL_USERS);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [claims, setClaims] = useState<Claim[]>([]);
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [moderationReports, setModerationReports] = useState<ModerationReport[]>([]);
 
   const [currentPage, setCurrentPage] = useState<PageView>('home');
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
@@ -317,31 +218,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Sync to LocalStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.ITEMS, JSON.stringify(items));
-    } catch (e) {
-      console.error('LocalStorage write error', e);
-    }
-  }, [items]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.LOCATIONS, JSON.stringify(locations));
-    } catch (e) {
-      console.error('LocalStorage write error', e);
-    }
-  }, [locations]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(allUsers));
-    } catch (e) {
-      console.error('LocalStorage write error', e);
-    }
-  }, [allUsers]);
-
+  // Persist only user session token/ID to localStorage for seamless authentication
   useEffect(() => {
     try {
       if (currentUser) {
@@ -350,73 +227,116 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
       }
     } catch (e) {
-      console.error('LocalStorage write error', e);
+      console.error('Session write error', e);
     }
   }, [currentUser]);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(messages));
-    } catch (e) {
-      console.error('LocalStorage write error', e);
-    }
-  }, [messages]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.CLAIMS, JSON.stringify(claims));
-    } catch (e) {
-      console.error('LocalStorage write error', e);
-    }
-  }, [claims]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.ACTIVITIES, JSON.stringify(activityLogs));
-    } catch (e) {
-      console.error('LocalStorage write error', e);
-    }
-  }, [activityLogs]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.MODERATION, JSON.stringify(moderationReports));
-    } catch (e) {
-      console.error('LocalStorage write error', e);
-    }
-  }, [moderationReports]);
-
-  // Sync users with server database
-  useEffect(() => {
-    fetch('/api/users')
-      .then(res => res.json())
-      .then(data => {
-        const userList: User[] = Array.isArray(data) ? data : (data.users || []);
-        if (Array.isArray(userList) && userList.length > 0) {
-          setAllUsers(userList);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  // Sync items with backend database (respecting admin vs public/student views)
-  const refreshItems = useCallback(async () => {
+  // Authoritative Backend Data Fetcher: Centralized Single Source of Truth
+  const refreshAllData = useCallback(async () => {
     try {
       const isAdmin = currentUser?.role === 'admin';
-      const url = isAdmin && currentUser
+      const itemsUrl = isAdmin && currentUser
         ? `/api/items?adminId=${encodeURIComponent(currentUser.id)}&includeDeleted=true`
         : '/api/items';
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
+
+      const [itemsRes, usersRes, claimsRes, msgsRes, actsRes, modsRes, locsRes] = await Promise.all([
+        fetch(itemsUrl).catch(() => null),
+        fetch('/api/users').catch(() => null),
+        fetch('/api/claims').catch(() => null),
+        fetch('/api/messages').catch(() => null),
+        fetch('/api/activities').catch(() => null),
+        fetch('/api/moderation').catch(() => null),
+        fetch('/api/locations').catch(() => null)
+      ]);
+
+      if (itemsRes && itemsRes.ok) {
+        const data = await itemsRes.json();
         if (Array.isArray(data)) {
-          setItems(data);
+          setItems(data); // Authoritatively set even if empty array []
+        }
+      }
+
+      if (usersRes && usersRes.ok) {
+        const data = await usersRes.json();
+        const userList: User[] = Array.isArray(data) ? data : (data.users || []);
+        if (Array.isArray(userList)) {
+          setAllUsers(userList);
+          if (currentUser) {
+            const updatedCurrentUser = userList.find(u => u.id === currentUser.id);
+            if (!updatedCurrentUser || updatedCurrentUser.isDeleted) {
+              setCurrentUser(null);
+              localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+              setCurrentPage('home');
+            } else {
+              setCurrentUser(updatedCurrentUser);
+            }
+          }
+        }
+      }
+
+      if (claimsRes && claimsRes.ok) {
+        const data = await claimsRes.json();
+        if (Array.isArray(data)) {
+          setClaims(data); // Authoritatively set even if empty array []
+        }
+      }
+
+      if (msgsRes && msgsRes.ok) {
+        const data = await msgsRes.json();
+        if (Array.isArray(data)) {
+          setMessages(data); // Authoritatively set even if empty array []
+        }
+      }
+
+      if (actsRes && actsRes.ok) {
+        const data = await actsRes.json();
+        if (Array.isArray(data)) {
+          setActivityLogs(data); // Authoritatively set even if empty array []
+        }
+      }
+
+      if (modsRes && modsRes.ok) {
+        const data = await modsRes.json();
+        if (Array.isArray(data)) {
+          setModerationReports(data); // Authoritatively set even if empty array []
+        }
+      }
+
+      if (locsRes && locsRes.ok) {
+        const data = await locsRes.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setLocations(data);
         }
       }
     } catch (err) {
-      console.error('Failed to sync items from backend', err);
+      console.error('Failed to sync authoritative database state', err);
     }
   }, [currentUser]);
+
+  // Restore authenticated session on initial mount & fetch initial backend state
+  useEffect(() => {
+    const savedUserId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
+    if (savedUserId) {
+      fetch(`/api/auth/me?userId=${encodeURIComponent(savedUserId)}`)
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && data.success && data.user) {
+            setCurrentUser(data.user);
+          } else if (data && data.success === false) {
+            localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+            setCurrentUser(null);
+          }
+        })
+        .catch(() => {});
+    }
+
+    refreshAllData();
+  }, [refreshAllData]);
+
+  // Re-fetch data when authentication context changes
+  const refreshItems = useCallback(async () => {
+    await refreshAllData();
+  }, [refreshAllData]);
 
   useEffect(() => {
     refreshItems();
@@ -486,6 +406,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     additionalInfo?: string;
     userContactPref: 'in-app' | 'email' | 'phone';
   }): string => {
+    if (currentUser?.isBlocked) {
+      alert('Your account has been blocked. You cannot submit new reports.');
+      return '';
+    }
+    if (currentUser?.isRestricted) {
+      alert('Your account is restricted. You cannot submit new reports at this time.');
+      return '';
+    }
     const newId = `item-${Date.now()}`;
     const userRole = currentUser?.role || 'student';
     const isStaffOrAdmin = userRole === 'staff' || userRole === 'admin';
@@ -550,8 +478,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newId;
   };
 
-  const updateItem = (updated: Item) => {
-    setItems(prev => prev.map(item => (item.id === updated.id ? updated : item)));
+  const updateItem = async (updated: Item) => {
+    try {
+      const res = await fetch(`/api/items/${updated.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+      if (res.ok) {
+        await refreshAllData();
+      }
+    } catch (err) {
+      console.error('Failed to update item on backend:', err);
+    }
   };
 
   const deleteItem = async (itemId: string): Promise<boolean> => {
@@ -684,86 +623,143 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
 
-    if (currentUser) {
-      const item = items.find(i => i.id === itemId);
-      const newActivity: ActivityLog = {
-        id: `act-${Date.now()}`,
-        userId: currentUser.id,
-        title: 'Item Recovered & Case Closed',
-        description: `"${item?.itemName || 'Item'}" was officially marked as recovered. Case closed!`,
-        timestamp: new Date().toISOString(),
-        type: 'RECOVERY'
-      };
-      setActivityLogs(prev => [newActivity, ...prev]);
+    fetch(`/api/items/${itemId}/recover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: currentUser?.id, userName: currentUser?.name })
+    })
+    .then(() => refreshAllData())
+    .catch(err => console.error('Failed to sync recovery to backend:', err));
+  };
+
+  const verifyItem = async (itemId: string, verifierName?: string) => {
+    if (!currentUser || currentUser.role !== 'admin') {
+      alert('Security Notice: Only Campus Administrators can verify reports.');
+      return;
+    }
+    
+    try {
+      const res = await fetch(`/api/items/${itemId}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminId: currentUser.id })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        await refreshAllData();
+      } else {
+        alert(data.error || 'Failed to verify report.');
+      }
+    } catch (err) {
+      console.error('Failed to sync verification to backend:', err);
+      alert('Network error while verifying report.');
     }
   };
 
-  const verifyItem = (itemId: string, verifierName?: string) => {
-    const today = new Date().toISOString();
-    const verifier = verifierName || currentUser?.name || 'IYC Faculty';
-
-    setItems(prev =>
-      prev.map(item =>
-        item.id === itemId
-          ? {
-              ...item,
-              verificationStatus: 'VERIFIED' as const,
-              isVerifiedByAdmin: true,
-              verifiedBy: verifier,
-              verifiedAt: today
-            }
-          : item
-      )
-    );
-  };
-
   const rejectItemListing = (itemId: string, reason?: string) => {
+    const finalReason = reason || 'Details unverified';
     setItems(prev =>
       prev.map(item =>
         item.id === itemId
           ? {
               ...item,
               verificationStatus: 'REJECTED' as const,
-              additionalInfo: `${item.additionalInfo || ''} [Staff Rejection: ${reason || 'Details unverified'}]`
+              additionalInfo: `${item.additionalInfo || ''} [Staff Rejection: ${finalReason}]`
             }
           : item
       )
     );
+
+    fetch(`/api/items/${itemId}/reject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: finalReason, verifiedBy: currentUser?.name })
+    })
+    .then(() => refreshAllData())
+    .catch(err => console.error('Failed to sync rejection to backend:', err));
   };
 
   const addLocation = (area: string, name: string, description?: string) => {
     const newLoc: CampusLocation = {
-      id: `loc-custom-${Date.now()}`,
+      id: `loc-${Date.now()}`,
       area,
       name,
       isActive: true,
       description
     };
     setLocations(prev => [...prev, newLoc]);
+
+    fetch('/api/locations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ area, name, description })
+    })
+    .then(res => res.json())
+    .then(() => {
+      fetch('/api/locations')
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setLocations(data);
+        });
+    })
+    .catch(err => console.error('Failed to sync location to backend:', err));
   };
 
   const updateLocation = (id: string, updates: Partial<CampusLocation>) => {
     setLocations(prev =>
       prev.map(loc => (loc.id === id ? { ...loc, ...updates } : loc))
     );
+
+    fetch(`/api/locations/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates)
+    })
+    .then(() => {
+      fetch('/api/locations')
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setLocations(data);
+        });
+    })
+    .catch(err => console.error('Failed to sync location update to backend:', err));
   };
 
   const toggleLocationStatus = (id: string) => {
     setLocations(prev =>
       prev.map(loc => (loc.id === id ? { ...loc, isActive: !loc.isActive } : loc))
     );
+
+    fetch(`/api/locations/${id}/toggle`, {
+      method: 'POST'
+    })
+    .then(() => {
+      fetch('/api/locations')
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setLocations(data);
+        });
+    })
+    .catch(err => console.error('Failed to toggle location on backend:', err));
   };
 
-  const submitClaim = (
+  const submitClaim = async (
     itemId: string, 
     proofMessage: string, 
     details?: { studentId?: string; department?: string; phone?: string; }
-  ) => {
+  ): Promise<boolean> => {
+    if (currentUser?.isBlocked) {
+      alert('Your account has been blocked. You cannot submit claims.');
+      return false;
+    }
+    if (currentUser?.isRestricted) {
+      alert('Your account is restricted. You cannot submit claims at this time.');
+      return false;
+    }
     const item = items.find(i => i.id === itemId);
-    if (!item || !currentUser) return;
+    if (!item || !currentUser) return false;
 
-    const newClaim: Claim = {
-      id: `claim-${Date.now()}`,
+    const newClaim: Partial<Claim> = {
       itemId,
       itemName: item.itemName,
       itemType: item.type,
@@ -775,136 +771,92 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       claimantStudentId: details?.studentId || currentUser.studentId || '',
       claimantDepartment: details?.department || currentUser.department || '',
       claimantPhone: details?.phone || currentUser.phone || '',
-      message: proofMessage.trim(),
-      status: 'PENDING',
-      createdAt: new Date().toISOString()
+      message: proofMessage.trim()
     };
 
-    setClaims(prev => [newClaim, ...prev]);
-
-    setItems(prev =>
-      prev.map(i =>
-        i.id === itemId ? { ...i, status: 'CLAIMED' as ItemStatus } : i
-      )
-    );
-
-    sendMessage(
-      item.userId,
-      itemId,
-      `📋 New Ownership Claim Received from ${currentUser.name} (${currentUser.studentId || 'Student'}). Review their proof in your Dashboard.`
-    );
-
-    const newActivity: ActivityLog = {
-      id: `act-${Date.now()}`,
-      userId: currentUser.id,
-      title: 'Ownership Claim Submitted',
-      description: `Submitted claim with proof for "${item.itemName}". Pending finder/staff review.`,
-      timestamp: new Date().toISOString(),
-      type: 'STATUS'
-    };
-    setActivityLogs(prev => [newActivity, ...prev]);
+    try {
+      const res = await fetch('/api/claims', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newClaim)
+      });
+      const data = await res.json();
+      
+      if (res.ok && data.success) {
+        await refreshAllData();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Failed to submit claim to backend:', err);
+      return false;
+    }
   };
 
-  const approveClaim = (claimId: string, handoverNotes?: string, handoverLocation?: string) => {
+  const approveClaim = async (claimId: string, handoverNotes?: string, handoverLocation?: string): Promise<boolean> => {
     const claim = claims.find(c => c.id === claimId);
-    if (!claim) return;
+    if (!claim) return false;
 
-    const today = new Date().toISOString().split('T')[0];
     const item = items.find(i => i.id === claim.itemId);
     const finalHandoverLocation = handoverLocation || item?.currentStorageLocation || 'Computer Science Department Office';
     const finalNotes = handoverNotes || 'Handover verified and completed. Student ID confirmed.';
 
-    setClaims(prev =>
-      prev.map(c => {
-        if (c.id === claimId) {
-          return {
-            ...c,
-            status: 'APPROVED' as const,
-            resolvedAt: today,
-            resolutionNotes: finalNotes,
-            handoverLocation: finalHandoverLocation
-          };
-        }
-        if (c.itemId === claim.itemId && c.status === 'PENDING') {
-          return {
-            ...c,
-            status: 'REJECTED' as const,
-            resolvedAt: today,
-            resolutionNotes: 'Closed: Another claimant was verified as the rightful owner.'
-          };
-        }
-        return c;
-      })
-    );
-
-    setItems(prev =>
-      prev.map(i => {
-        if (i.id === claim.itemId) {
-          return {
-            ...i,
-            status: 'RECOVERED' as ItemStatus,
-            recoveredAt: today
-          };
-        }
-        return i;
-      })
-    );
-
-    sendMessage(
-      claim.claimantId,
-      claim.itemId,
-      `🎉 Great news! Your ownership claim for "${claim.itemName}" was APPROVED by ${currentUser?.name || 'Staff'}. Collection point: "${finalHandoverLocation}". Please carry your Student ID Card (${claim.claimantStudentId || 'Student ID'}) for physical collection. Notes: "${finalNotes}".`
-    );
-
-    const otherClaims = claims.filter(c => c.itemId === claim.itemId && c.id !== claimId && c.status === 'PENDING');
-    otherClaims.forEach(oc => {
-      sendMessage(
-        oc.claimantId,
-        oc.itemId,
-        `Update on "${oc.itemName}": This item has been verified and returned to another claimant with matching proof.`
-      );
-    });
+    try {
+      const res = await fetch(`/api/claims/${claimId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reviewerId: currentUser?.id,
+          reviewerName: currentUser?.name || 'Staff',
+          resolutionNotes: finalNotes,
+          handoverLocation: finalHandoverLocation
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        await refreshAllData();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Failed to sync claim approval to backend:', err);
+      return false;
+    }
   };
 
-  const rejectClaim = (claimId: string, rejectionReason?: string) => {
+  const rejectClaim = async (claimId: string, rejectionReason?: string): Promise<boolean> => {
     const claim = claims.find(c => c.id === claimId);
-    if (!claim) return;
+    if (!claim) return false;
 
-    const today = new Date().toISOString().split('T')[0];
     const finalReason = rejectionReason || 'Proof details did not match physical item inspection.';
 
-    setClaims(prev =>
-      prev.map(c =>
-        c.id === claimId
-          ? {
-              ...c,
-              status: 'REJECTED' as const,
-              resolvedAt: today,
-              resolutionNotes: finalReason
-            }
-          : c
-      )
-    );
-
-    const otherPending = claims.some(c => c.itemId === claim.itemId && c.id !== claimId && c.status === 'PENDING');
-    if (!otherPending) {
-      setItems(prev =>
-        prev.map(i =>
-          i.id === claim.itemId && i.status === 'CLAIMED'
-            ? { ...i, status: 'ACTIVE' as ItemStatus }
-            : i
-        )
-      );
+    try {
+      const res = await fetch(`/api/claims/${claimId}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reviewerId: currentUser?.id,
+          reviewerName: currentUser?.name || 'Staff',
+          resolutionNotes: finalReason
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        await refreshAllData();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Failed to sync claim rejection to backend:', err);
+      return false;
     }
-
-    sendMessage(
-      claim.claimantId,
-      claim.itemId,
-      `Your ownership claim for "${claim.itemName}" was reviewed and could not be verified by ${currentUser?.name || 'Staff'}. Reason: "${finalReason}".`
-    );
   };
 
   const sendMessage = (receiverId: string, itemId: string, text: string) => {
+    if (currentUser?.isBlocked) {
+      alert('Your account has been blocked. You cannot send messages.');
+      return;
+    }
     const item = items.find(i => i.id === itemId);
     const receiver = allUsers.find(u => u.id === receiverId);
 
@@ -923,16 +875,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setMessages(prev => [newMsg, ...prev]);
+
+    // Persist message to backend database
+    fetch('/api/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newMsg)
+    })
+    .then(() => {
+      fetch('/api/messages')
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setMessages(data);
+        });
+    })
+    .catch(err => console.error('Failed to sync message to backend:', err));
   };
 
   const markMessageRead = (messageId: string) => {
     setMessages(prev =>
       prev.map(msg => (msg.id === messageId ? { ...msg, read: true } : msg))
     );
+
+    fetch(`/api/messages/${messageId}/read`, {
+      method: 'POST'
+    }).catch(err => console.error('Failed to mark message read on backend:', err));
   };
 
   // Student Login (Student ID + Password)
-  const loginStudent = (studentId: string, password?: string): { success: boolean; error?: string } => {
+  const loginStudent = (studentId: string, password?: string, authenticatedUser?: User): { success: boolean; error?: string } => {
+    if (authenticatedUser) {
+      setCurrentUser(authenticatedUser);
+      setAllUsers(prev => {
+        const idx = prev.findIndex(u => u.id === authenticatedUser.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = authenticatedUser;
+          return next;
+        }
+        return [...prev, authenticatedUser];
+      });
+      try {
+        localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, authenticatedUser.id);
+      } catch {}
+      if (pendingPostAuthAction) {
+        pendingPostAuthAction();
+        setPendingPostAuthAction(null);
+      }
+      return { success: true };
+    }
+
     const cleanId = studentId.trim().toUpperCase();
     const user = allUsers.find(u => (u.studentId || '').toUpperCase() === cleanId && u.role === 'student');
 
@@ -949,6 +941,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setCurrentUser(user);
+    try {
+      localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, user.id);
+    } catch {}
     if (pendingPostAuthAction) {
       pendingPostAuthAction();
       setPendingPostAuthAction(null);
@@ -957,7 +952,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Staff / Faculty Login (Email + Password)
-  const loginStaff = (identifier: string, password?: string): { success: boolean; error?: string } => {
+  const loginStaff = (identifier: string, password?: string, authenticatedUser?: User): { success: boolean; error?: string } => {
+    if (authenticatedUser) {
+      setCurrentUser(authenticatedUser);
+      setAllUsers(prev => {
+        const idx = prev.findIndex(u => u.id === authenticatedUser.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = authenticatedUser;
+          return next;
+        }
+        return [...prev, authenticatedUser];
+      });
+      try {
+        localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, authenticatedUser.id);
+      } catch {}
+      if (pendingPostAuthAction) {
+        pendingPostAuthAction();
+        setPendingPostAuthAction(null);
+      }
+      return { success: true };
+    }
+
     const clean = identifier.trim().toLowerCase();
     const staffUser = allUsers.find(u => 
       (u.role === 'staff' || u.role === 'admin') &&
@@ -980,6 +996,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setCurrentUser(staffUser);
+    try {
+      localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, staffUser.id);
+    } catch {}
     if (pendingPostAuthAction) {
       pendingPostAuthAction();
       setPendingPostAuthAction(null);
@@ -988,7 +1007,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Admin Login (Authorized Admin Mayur Suryavanshi ONLY)
-  const loginAdmin = (identifier: string, password?: string): { success: boolean; error?: string } => {
+  const loginAdmin = (identifier: string, password?: string, authenticatedUser?: User): { success: boolean; error?: string } => {
+    if (authenticatedUser) {
+      setCurrentUser(authenticatedUser);
+      setAllUsers(prev => {
+        const idx = prev.findIndex(u => u.id === authenticatedUser.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = authenticatedUser;
+          return next;
+        }
+        return [...prev, authenticatedUser];
+      });
+      try {
+        localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, authenticatedUser.id);
+      } catch {}
+      if (pendingPostAuthAction) {
+        pendingPostAuthAction();
+        setPendingPostAuthAction(null);
+      }
+      return { success: true };
+    }
+
     const clean = identifier.trim().toLowerCase();
     const adminUser = allUsers.find(u => 
       u.role === 'admin' &&
@@ -1008,6 +1048,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setCurrentUser(adminUser);
+    try {
+      localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, adminUser.id);
+    } catch {}
     if (pendingPostAuthAction) {
       pendingPostAuthAction();
       setPendingPostAuthAction(null);
@@ -1021,7 +1064,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Student Registration (Full Name, Student ID, Course, Study Year, Mandatory Verified Email, Password, Optional Phone)
-  const registerStudent = (studentData: StudentRegistrationInput): { success: boolean; error?: string; errors?: Record<string, string> } => {
+  const registerStudent = (studentData: StudentRegistrationInput, createdUser?: User): { success: boolean; error?: string; errors?: Record<string, string> } => {
+    if (createdUser) {
+      setAllUsers(prev => {
+        if (prev.some(u => u.id === createdUser.id)) return prev;
+        return [...prev, createdUser];
+      });
+      return { success: true };
+    }
+
     const validation = validateStudentRegistration(studentData);
     if (!validation.isValid) {
       const firstError = Object.values(validation.errors)[0];
@@ -1088,7 +1139,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     password?: string;
     confirmPassword?: string;
     verificationToken?: string;
-  }): { success: boolean; error?: string } => {
+  }, createdUser?: User): { success: boolean; error?: string } => {
+    if (createdUser) {
+      setAllUsers(prev => {
+        if (prev.some(u => u.id === createdUser.id)) return prev;
+        return [...prev, createdUser];
+      });
+      return { success: true };
+    }
+
     const trimmedEmail = (staffData.email || '').trim().toLowerCase();
     if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
       return { success: false, error: 'Please enter a valid email address.' };
@@ -1156,15 +1215,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         item.id === itemId ? { ...item, isReportedSuspicious: true } : item
       )
     );
-    const newReport: ModerationReport = {
-      id: `rep-${Date.now()}`,
-      itemId,
-      reportedBy: currentUser?.name || 'Anonymous Student',
-      reason,
-      createdAt: new Date().toISOString(),
-      status: 'PENDING'
-    };
-    setModerationReports(prev => [newReport, ...prev]);
+
+    fetch(`/api/items/${itemId}/flag`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reason,
+        reportedBy: currentUser?.name || 'Anonymous Student',
+        userId: currentUser?.id
+      })
+    })
+    .then(() => refreshAllData())
+    .catch(err => console.error('Failed to sync item flag to backend:', err));
   };
 
   const dismissFlag = (itemId: string) => {
@@ -1176,23 +1238,91 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setModerationReports(prev =>
       prev.map(r => (r.itemId === itemId ? { ...r, status: 'DISMISSED' } : r))
     );
+
+    fetch(`/api/items/${itemId}/dismiss-flag`, {
+      method: 'POST'
+    })
+    .then(() => refreshAllData())
+    .catch(err => console.error('Failed to dismiss flag on backend:', err));
   };
 
-  const toggleUserBlock = (userId: string) => {
-    setAllUsers(prev =>
-      prev.map(u => u.id === userId ? { ...u } : u)
-    );
+  const blockUser = async (userId: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/block`, { 
+        method: 'PUT',
+        headers: { 'x-admin-id': currentUser?.id || '' }
+      });
+      if (res.ok) {
+        await refreshAllData();
+        return true;
+      }
+      return false;
+    } catch { return false; }
+  };
+
+  const unblockUser = async (userId: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/unblock`, { 
+        method: 'PUT',
+        headers: { 'x-admin-id': currentUser?.id || '' }
+      });
+      if (res.ok) {
+        await refreshAllData();
+        return true;
+      }
+      return false;
+    } catch { return false; }
+  };
+
+  const restrictUser = async (userId: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/restrict`, { 
+        method: 'PUT',
+        headers: { 'x-admin-id': currentUser?.id || '' }
+      });
+      if (res.ok) {
+        await refreshAllData();
+        return true;
+      }
+      return false;
+    } catch { return false; }
+  };
+
+  const unrestrictUser = async (userId: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/unrestrict`, { 
+        method: 'PUT',
+        headers: { 'x-admin-id': currentUser?.id || '' }
+      });
+      if (res.ok) {
+        await refreshAllData();
+        return true;
+      }
+      return false;
+    } catch { return false; }
+  };
+
+  const deleteUser = async (userId: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, { 
+        method: 'DELETE',
+        headers: { 'x-admin-id': currentUser?.id || '' }
+      });
+      if (res.ok) {
+        await refreshAllData();
+        return true;
+      }
+      return false;
+    } catch { return false; }
   };
 
   const resetToDefaultData = () => {
-    localStorage.clear();
-    setItems(INITIAL_ITEMS);
-    setLocations(INITIAL_LOCATIONS);
-    setAllUsers(INITIAL_USERS);
-    setMessages(INITIAL_MESSAGES);
-    setClaims(INITIAL_CLAIMS);
-    setActivityLogs(INITIAL_ACTIVITIES);
-    setModerationReports(INITIAL_MODERATION);
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+    fetch('/api/reset', {
+      method: 'POST'
+    })
+    .then(() => refreshAllData())
+    .catch(err => console.error('Failed to reset backend database:', err));
     setCurrentUser(null);
     setCurrentPage('home');
   };
@@ -1273,7 +1403,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         logout,
         flagItem,
         dismissFlag,
-        toggleUserBlock,
+        blockUser,
+        unblockUser,
+        restrictUser,
+        unrestrictUser,
+        deleteUser,
         resetToDefaultData
       }}
     >

@@ -31,9 +31,12 @@ export const EditItemModal: React.FC<Props> = ({ item, onClose }) => {
   const [currentStorageLocation, setCurrentStorageLocation] = useState(item.currentStorageLocation || '');
   const [additionalInfo, setAdditionalInfo] = useState(item.additionalInfo || '');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateItem({
+    setIsSubmitting(true);
+    await updateItem({
       ...item,
       itemName: itemName.trim(),
       category,
@@ -44,6 +47,7 @@ export const EditItemModal: React.FC<Props> = ({ item, onClose }) => {
       currentStorageLocation: item.type === 'FOUND' ? currentStorageLocation.trim() : undefined,
       additionalInfo: additionalInfo.trim()
     });
+    setIsSubmitting(false);
     onClose();
   };
 
@@ -161,16 +165,18 @@ export const EditItemModal: React.FC<Props> = ({ item, onClose }) => {
             <button
               type="button"
               onClick={onClose}
+              disabled={isSubmitting}
               className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="inline-flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg"
+              disabled={isSubmitting}
+              className={`inline-flex items-center space-x-1.5 px-4 py-2 ${isSubmitting ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'} text-white text-xs font-bold rounded-lg`}
             >
               <Save className="w-4 h-4" />
-              <span>Save Changes</span>
+              <span>{isSubmitting ? 'Saving...' : 'Save Changes'}</span>
             </button>
           </div>
         </form>

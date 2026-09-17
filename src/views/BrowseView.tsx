@@ -61,13 +61,13 @@ export const BrowseView: React.FC = () => {
   const filteredItems = useMemo(() => {
     return activeItems.filter(item => {
       // 1. Status/Type filter
-      if (browseFilters.type !== 'ALL') {
-        if (browseFilters.type === 'RECOVERED') {
-          if (item.status !== 'RECOVERED') return false;
-        } else {
-          if (item.type !== browseFilters.type) return false;
-          if (item.status === 'RECOVERED') return false;
-        }
+      if (browseFilters.type === 'ALL') {
+        if (item.status === 'RECOVERED') return false;
+      } else if (browseFilters.type === 'RECOVERED') {
+        if (item.status !== 'RECOVERED') return false;
+      } else {
+        if (item.type !== browseFilters.type) return false;
+        if (item.status === 'RECOVERED') return false;
       }
 
       // 2. Category filter
@@ -173,7 +173,7 @@ export const BrowseView: React.FC = () => {
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              All Items ({activeItems.length})
+              All Items ({activeItems.filter(i => i.status !== 'RECOVERED').length})
             </button>
             <button
               onClick={() => setBrowseFilters(prev => ({ ...prev, type: 'LOST' }))}

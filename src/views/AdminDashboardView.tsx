@@ -52,7 +52,12 @@ export const AdminDashboardView: React.FC = () => {
     selectItem,
     currentUser,
     setCurrentPage,
-    openAuthModal 
+    openAuthModal,
+    blockUser,
+    unblockUser,
+    restrictUser,
+    unrestrictUser,
+    deleteUser
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'items' | 'users' | 'claims' | 'moderation' | 'matches' | 'locations' | 'schema'>('items');
@@ -751,7 +756,7 @@ export const AdminDashboardView: React.FC = () => {
                     <td className="py-3 px-4 text-slate-700">
                       {user.department}
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3 px-4 flex flex-col items-start gap-1">
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                         user.role === 'admin' 
                           ? 'bg-indigo-100 text-indigo-800' 
@@ -759,17 +764,63 @@ export const AdminDashboardView: React.FC = () => {
                       }`}>
                         {user.role}
                       </span>
+                      {user.isBlocked && <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800">Blocked</span>}
+                      {user.isRestricted && <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-800">Restricted</span>}
                     </td>
                     <td className="py-3 px-4 text-right space-x-2">
                       <span className="px-2.5 py-1 bg-slate-100 text-slate-600 font-medium rounded text-[11px] border border-slate-200 inline-block">
                         {user.role === 'admin' ? 'Root Admin' : user.role === 'staff' ? 'Faculty Staff' : 'Student Account'}
                       </span>
-                      <button
-                        onClick={() => alert(`User ${user.name} status: Active. Account permissions verified.`)}
-                        className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded text-[11px]"
-                      >
-                        Block / Restrict
-                      </button>
+                      {user.role !== 'admin' && (
+                        <>
+                          <button
+                            onClick={async () => {
+                              const success = user.isBlocked ? await unblockUser(user.id) : await blockUser(user.id);
+                              if (success) {
+                                setActionFeedback(`User ${user.name} has been ${user.isBlocked ? 'unblocked' : 'blocked'}.`);
+                                setTimeout(() => setActionFeedback(null), 3000);
+                              } else {
+                                alert(`Failed to ${user.isBlocked ? 'unblock' : 'block'} user.`);
+                              }
+                            }}
+                            className={`px-2 py-1 font-bold rounded text-[11px] ${user.isBlocked ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-600' : 'bg-red-50 hover:bg-red-100 text-red-600'}`}
+                          >
+                            {user.isBlocked ? 'Unblock' : 'Block'}
+                          </button>
+                          
+                          <button
+                            onClick={async () => {
+                              const success = user.isRestricted ? await unrestrictUser(user.id) : await restrictUser(user.id);
+                              if (success) {
+                                setActionFeedback(`User ${user.name} has been ${user.isRestricted ? 'unrestricted' : 'restricted'}.`);
+                                setTimeout(() => setActionFeedback(null), 3000);
+                              } else {
+                                alert(`Failed to ${user.isRestricted ? 'unrestrict' : 'restrict'} user.`);
+                              }
+                            }}
+                            className={`px-2 py-1 font-bold rounded text-[11px] ${user.isRestricted ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-600' : 'bg-orange-50 hover:bg-orange-100 text-orange-600'}`}
+                          >
+                            {user.isRestricted ? 'Unrestrict' : 'Restrict'}
+                          </button>
+
+                          <button
+                            onClick={async () => {
+                              if (window.confirm(`Are you sure you want to delete the user ${user.name}? This action cannot be undone and will also delete their items.`)) {
+                                const success = await deleteUser(user.id);
+                                if (success) {
+                                  setActionFeedback(`User ${user.name} deleted successfully.`);
+                                  setTimeout(() => setActionFeedback(null), 3000);
+                                } else {
+                                  alert('Failed to delete user.');
+                                }
+                              }
+                            }}
+                            className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white font-bold rounded text-[11px] ml-2"
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -940,13 +991,29 @@ export const AdminDashboardView: React.FC = () => {
                             {claim.status === 'PENDING' && (
                               <>
                                 <button
-                                  onClick={() => approveClaim(claim.id)}
+                                  onClick={async () => {
+                                    const success = await approveClaim(claim.id);
+                                    if (success) {
+                                      setActionFeedback(`Claim approved successfully.`);
+                                      setTimeout(() => setActionFeedback(null), 3000);
+                                    } else {
+                                      alert('Failed to approve claim.');
+                                    }
+                                  }}
                                   className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] rounded"
                                 >
                                   Approve
                                 </button>
                                 <button
-                                  onClick={() => rejectClaim(claim.id)}
+                                  onClick={async () => {
+                                    const success = await rejectClaim(claim.id);
+                                    if (success) {
+                                      setActionFeedback(`Claim rejected successfully.`);
+                                      setTimeout(() => setActionFeedback(null), 3000);
+                                    } else {
+                                      alert('Failed to reject claim.');
+                                    }
+                                  }}
                                   className="px-2.5 py-1 bg-red-100 hover:bg-red-200 text-red-700 font-bold text-[11px] rounded"
                                 >
                                   Reject

@@ -29,6 +29,9 @@ export interface User {
   password?: string;
   avatar?: string;
   createdAt: string;
+  isBlocked?: boolean;
+  isRestricted?: boolean;
+  isDeleted?: boolean;
 }
 
 export interface CampusLocation {

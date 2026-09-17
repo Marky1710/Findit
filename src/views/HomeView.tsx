@@ -50,8 +50,8 @@ export const HomeView: React.FC = () => {
   };
 
   // Recent items (exclude soft-deleted reports)
-  const recentLost = activeItems.filter(i => i.type === 'LOST').slice(0, 3);
-  const recentFound = activeItems.filter(i => i.type === 'FOUND').slice(0, 3);
+  const recentLost = activeItems.filter(i => i.type === 'LOST' && i.status !== 'RECOVERED').slice(0, 3);
+  const recentFound = activeItems.filter(i => i.type === 'FOUND' && i.status !== 'RECOVERED').slice(0, 3);
 
   return (
     <div className="space-y-16 pb-12">
@@ -97,15 +97,6 @@ export const HomeView: React.FC = () => {
             >
               <PlusCircle className="w-4 h-4" />
               <span>Report Found Item</span>
-            </button>
-
-            <button
-              id="hero-matches-btn"
-              onClick={() => setCurrentPage('matches')}
-              className="w-full sm:w-auto px-6 py-3.5 rounded-xl font-bold text-sm bg-amber-400 hover:bg-amber-500 text-slate-950 transition-all flex items-center justify-center space-x-2 shadow-lg shadow-amber-400/20"
-            >
-              <Sparkles className="w-4 h-4" />
-              <span>Possible Matches</span>
             </button>
           </div>
 

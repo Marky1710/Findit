@@ -62,7 +62,7 @@ export const ItemDetailsView: React.FC = () => {
   const item = items.find(i => i.id === selectedItemId);
 
   // If item does not exist or is soft-deleted and current user is not admin
-  if (!item || (item.deleted && currentUser.role !== 'admin')) {
+  if (!item || (item.deleted && currentUser?.role !== 'admin')) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-20 text-center space-y-4">
         <div className="w-16 h-16 bg-slate-100 text-slate-400 rounded-full flex items-center justify-center mx-auto">
@@ -86,11 +86,11 @@ export const ItemDetailsView: React.FC = () => {
   const highConfidenceMatches = matchCandidates.filter(m => m.isPossibleMatch);
   const displayedMatches = filterHighConfidenceOnly ? highConfidenceMatches : matchCandidates;
   
-  const isOwnItem = item.userId === currentUser.id;
+  const isOwnItem = Boolean(currentUser && item.userId === currentUser.id);
   const itemClaims = claims.filter(c => c.itemId === item.id);
   const pendingClaimsOnThisItem = itemClaims.filter(c => c.status === 'PENDING');
   const approvedClaimOnThisItem = itemClaims.find(c => c.status === 'APPROVED');
-  const myClaimOnThisItem = claims.find(c => c.itemId === item.id && c.claimantId === currentUser.id);
+  const myClaimOnThisItem = currentUser ? claims.find(c => c.itemId === item.id && c.claimantId === currentUser.id) : undefined;
 
   const handleShare = () => {
     if (navigator.clipboard) {
@@ -183,7 +183,7 @@ export const ItemDetailsView: React.FC = () => {
           )}
 
           {/* Admin Direct Action: Soft Delete / Restore */}
-          {currentUser.role === 'admin' && (
+          {currentUser?.role === 'admin' && (
             item.deleted ? (
               <button
                 onClick={async () => {
@@ -476,17 +476,17 @@ export const ItemDetailsView: React.FC = () => {
           {/* Action Buttons Section */}
           <div className="pt-4 border-t border-slate-100 space-y-3">
             {/* Staff / Faculty Verification Action Banner */}
-            {(currentUser.role === 'staff' || currentUser.role === 'admin') && item.verificationStatus === 'PENDING' && (
+            {(currentUser?.role === 'staff' || currentUser?.role === 'admin') && item.verificationStatus === 'PENDING' && (
               <div className="bg-blue-50 border border-blue-300 rounded-2xl p-4 space-y-2">
                 <div className="flex items-center space-x-2 text-xs font-bold text-blue-900">
                   <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0" />
                   <span>Faculty &amp; Staff Moderation Action</span>
                 </div>
                 <p className="text-xs text-blue-800 leading-relaxed">
-                  This report is currently pending campus verification. As a verified faculty/staff member ({currentUser.name}), you can verify and publish this item listing to the campus feed.
+                  This report is currently pending campus verification. As a verified faculty/staff member ({currentUser?.name}), you can verify and publish this item listing to the campus feed.
                 </p>
                 <button
-                  onClick={() => verifyItem(item.id, currentUser.name)}
+                  onClick={() => currentUser && verifyItem(item.id, currentUser.name)}
                   className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center space-x-1.5"
                 >
                   <Check className="w-4 h-4" />

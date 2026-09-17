@@ -45,35 +45,43 @@ export const ClaimReviewModal: React.FC<ClaimReviewModalProps> = ({ claim, onClo
 
   const targetItem = items.find(i => i.id === claim.itemId);
   const claimantUser = allUsers.find(u => u.id === claim.claimantId);
-  const isAuthorizedReviewer = currentUser.role === 'admin' || currentUser.id === claim.ownerId;
+  const isAuthorizedReviewer = Boolean(currentUser && (currentUser.role === 'admin' || currentUser.id === claim.ownerId));
 
   // Initialize handover location with item's current storage if empty
   const defaultLocation = targetItem?.currentStorageLocation || 'Campus Security Cabin (Main Gate)';
 
-  const handleApprove = () => {
-    approveClaim(
+  const handleApprove = async () => {
+    const success = await approveClaim(
       claim.id, 
       handoverNotes.trim() || 'Physical proof and College Student ID verified by listing owner.',
       handoverLocation.trim() || defaultLocation
     );
-    setIsProcessed(true);
-    setToastMessage('🎉 Handover authorized! The item has been marked as Recovered.');
-    setTimeout(() => {
-      onClose();
-    }, 2200);
+    if (success) {
+      setIsProcessed(true);
+      setToastMessage('🎉 Handover authorized! The item has been marked as Recovered.');
+      setTimeout(() => {
+        onClose();
+      }, 2200);
+    } else {
+      alert('Failed to approve claim. Please try again.');
+    }
   };
 
-  const handleReject = () => {
+  const handleReject = async () => {
     if (!rejectionReason.trim()) {
       alert('Please enter a brief reason for rejecting the claim so the student understands.');
       return;
     }
-    rejectClaim(claim.id, rejectionReason.trim());
-    setIsProcessed(true);
-    setToastMessage('Claim rejected and student notified.');
-    setTimeout(() => {
-      onClose();
-    }, 2000);
+    const success = await rejectClaim(claim.id, rejectionReason.trim());
+    if (success) {
+      setIsProcessed(true);
+      setToastMessage('Claim rejected and student notified.');
+      setTimeout(() => {
+        onClose();
+      }, 2000);
+    } else {
+      alert('Failed to reject claim. Please try again.');
+    }
   };
 
   const handleOpenChat = () => {

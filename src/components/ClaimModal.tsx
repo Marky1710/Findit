@@ -48,20 +48,24 @@ export const ClaimModal: React.FC = () => {
     );
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (proofMessage.trim().length < 15) {
       setError('Please provide at least 15 characters explaining your proof of ownership (e.g., unique marks, identifiers, passwords, or contents).');
       return;
     }
 
-    submitClaim(activeClaimItem.id, proofMessage);
-    setSubmitted(true);
-    setTimeout(() => {
-      setSubmitted(false);
-      setProofMessage('');
-      closeClaimModal();
-    }, 2000);
+    const success = await submitClaim(activeClaimItem.id, proofMessage);
+    if (success) {
+      setSubmitted(true);
+      setTimeout(() => {
+        setSubmitted(false);
+        setProofMessage('');
+        closeClaimModal();
+      }, 2000);
+    } else {
+      setError('Failed to submit claim. Please try again.');
+    }
   };
 
   return (

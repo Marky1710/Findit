@@ -640,13 +640,29 @@ export const StaffDashboardView: React.FC = () => {
                       <span>Review Claim</span>
                     </button>
                     <button
-                      onClick={() => rejectClaim(claim.id, 'Proof does not match physical item inspection')}
+                      onClick={async () => {
+                        const success = await rejectClaim(claim.id, 'Proof does not match physical item inspection');
+                        if (success) {
+                          setActionFeedback(`Claim rejected.`);
+                          setTimeout(() => setActionFeedback(null), 3000);
+                        } else {
+                          alert('Failed to reject claim.');
+                        }
+                      }}
                       className="px-4 py-2 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold transition-colors"
                     >
                       Reject Claim
                     </button>
                     <button
-                      onClick={() => approveClaim(claim.id, 'Verified by Computer Science Faculty', 'Computer Science Dept Office')}
+                      onClick={async () => {
+                        const success = await approveClaim(claim.id, 'Verified by Computer Science Faculty', 'Computer Science Dept Office');
+                        if (success) {
+                          setActionFeedback(`Claim approved and marked recovered.`);
+                          setTimeout(() => setActionFeedback(null), 3000);
+                        } else {
+                          alert('Failed to approve claim.');
+                        }
+                      }}
                       className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors flex items-center space-x-1.5 shadow-xs"
                     >
                       <CheckCircle2 className="w-4 h-4" />

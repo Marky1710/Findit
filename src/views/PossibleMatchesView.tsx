@@ -35,7 +35,7 @@ export const PossibleMatchesView: React.FC = () => {
   const matchPairings = useMemo(() => {
     const activeLost = items.filter(item => {
       if (item.deleted || item.type !== 'LOST' || item.status === 'RECOVERED') return false;
-      if (scope === 'MY_ITEMS' && item.userId !== currentUser.id) return false;
+      if (scope === 'MY_ITEMS' && (!currentUser || item.userId !== currentUser.id)) return false;
       return true;
     });
 
@@ -73,7 +73,7 @@ export const PossibleMatchesView: React.FC = () => {
 
     // Sort by highest match score descending
     return results.sort((a, b) => b.matchDetails.totalScore - a.matchDetails.totalScore);
-  }, [items, currentUser.id, scope, minScore, searchQuery]);
+  }, [items, currentUser?.id, scope, minScore, searchQuery]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">

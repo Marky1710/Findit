@@ -109,6 +109,7 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
     setStaffRegPassword('');
     setStaffRegConfirmPassword('');
     setStaffRegSuccess('');
+    setStaffRegErrors({});
 
     // Reset staff OTP
     setStaffOtpCode('');
@@ -175,6 +176,7 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
   const [staffRegPassword, setStaffRegPassword] = useState('');
   const [staffRegConfirmPassword, setStaffRegConfirmPassword] = useState('');
   const [staffRegSuccess, setStaffRegSuccess] = useState('');
+  const [staffRegErrors, setStaffRegErrors] = useState<Record<string, string>>({});
 
   // Staff OTP Verification State
   const [staffOtpCode, setStaffOtpCode] = useState('');
@@ -243,7 +245,8 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
       });
 
       if (resp.ok) {
-        const result = loginStudent(cleanId, loginPassword.trim());
+        const data = await resp.json().catch(() => ({}));
+        const result = loginStudent(cleanId, loginPassword.trim(), data.user);
         if (result.success) {
           resetAllForms();
           onClose();
@@ -508,7 +511,7 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
       }
 
       // Also register into local context store
-      registerStudent({ ...input, verificationToken: studentVerificationToken });
+      registerStudent({ ...input, verificationToken: studentVerificationToken }, data.user);
 
       // Save ID to prefill login
       const registeredId = input.studentId;
@@ -561,7 +564,8 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
       });
 
       if (resp.ok) {
-        const result = loginStaff(cleanEmail, staffPassword.trim());
+        const data = await resp.json().catch(() => ({}));
+        const result = loginStaff(cleanEmail, staffPassword.trim(), data.user);
         if (result.success) {
           resetAllForms();
           onClose();
@@ -638,11 +642,14 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
       const data = await resp.json();
 
       if (!resp.ok || !data.success) {
+        if (data.field) {
+          setStaffRegErrors({ [data.field]: data.error });
+        }
         setStaffError(data.error || 'Staff registration failed.');
         return;
       }
 
-      registerStaff(staffData);
+      registerStaff(staffData, data.user);
       setStaffRegSuccess('Staff registration successful! You can now sign in with your email and password.');
       resetAllForms();
       setTimeout(() => {
@@ -681,7 +688,8 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
       });
 
       if (resp.ok) {
-        const result = loginAdmin(clean, adminPassword.trim());
+        const data = await resp.json().catch(() => ({}));
+        const result = loginAdmin(clean, adminPassword.trim(), data.user);
         if (result.success) {
           resetAllForms();
           onClose();
@@ -1405,7 +1413,9 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
                           className={`w-full pl-10 pr-4 py-2.5 rounded-xl border ${
                             staffEmailVerified 
                               ? 'border-emerald-400 bg-emerald-50/20 text-emerald-900' 
-                              : 'border-slate-300'
+                              : staffRegErrors.email
+                                ? 'border-red-400 bg-red-50/30'
+                                : 'border-slate-300'
                           } text-sm focus:ring-2 focus:ring-blue-500`}
                           required
                         />
@@ -1447,6 +1457,9 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
                         </button>
                       )}
                     </div>
+                    {staffRegErrors.email && (
+                      <p className="text-[11px] text-red-600">{staffRegErrors.email}</p>
+                    )}
 
                     {/* Staff OTP verification container */}
                     {staffOtpSent && !staffEmailVerified && (

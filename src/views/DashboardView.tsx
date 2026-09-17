@@ -134,16 +134,24 @@ export const DashboardView: React.FC = () => {
     setTimeout(() => setSuccessCelebration(null), 3500);
   };
 
-  const handleApproveClaim = (claimId: string, itemName: string, claimantName: string) => {
-    approveClaim(claimId);
-    setSuccessCelebration(`✓ Claim Approved! Handover verified for ${claimantName} on "${itemName}".`);
-    setTimeout(() => setSuccessCelebration(null), 4000);
+  const handleApproveClaim = async (claimId: string, itemName: string, claimantName: string) => {
+    const success = await approveClaim(claimId);
+    if (success) {
+      setSuccessCelebration(`✓ Claim Approved! Handover verified for ${claimantName} on "${itemName}".`);
+      setTimeout(() => setSuccessCelebration(null), 4000);
+    } else {
+      alert('Failed to approve claim. Please try again.');
+    }
   };
 
-  const handleRejectClaim = (claimId: string) => {
-    rejectClaim(claimId);
-    setSuccessCelebration(`Claim marked as rejected.`);
-    setTimeout(() => setSuccessCelebration(null), 3000);
+  const handleRejectClaim = async (claimId: string) => {
+    const success = await rejectClaim(claimId);
+    if (success) {
+      setSuccessCelebration(`Claim marked as rejected.`);
+      setTimeout(() => setSuccessCelebration(null), 3000);
+    } else {
+      alert('Failed to reject claim. Please try again.');
+    }
   };
 
   const handleReplySubmit = (e: React.FormEvent, parentMsg: typeof messages[0]) => {
