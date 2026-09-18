@@ -62,7 +62,7 @@ export const AdminDashboardView: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'items' | 'users' | 'claims' | 'moderation' | 'matches' | 'locations' | 'schema'>('items');
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterType, setFilterType] = useState<'ALL' | 'LOST' | 'FOUND' | 'DELETED'>('ALL');
+  const [filterType, setFilterType] = useState<'ALL' | 'LOST' | 'FOUND' | 'RECOVERED' | 'DELETED'>('ALL');
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -114,14 +114,20 @@ export const AdminDashboardView: React.FC = () => {
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
 
-  // Report lists: separate active vs soft-deleted
-  const activeItems = items.filter(i => !i.deleted);
+  // Report lists: Active Listings strictly exclude RECOVERED, CLOSED, REJECTED, and DELETED reports
+  const activeItems = items.filter(i => 
+    !i.deleted && 
+    i.status !== 'RECOVERED' && 
+    i.status !== 'CLOSED' && 
+    i.verificationStatus !== 'REJECTED'
+  );
+  const recoveredItems = items.filter(i => !i.deleted && i.status === 'RECOVERED');
   const deletedItems = items.filter(i => i.deleted);
 
   // Statistics based on actual database reports (excluding soft-deleted)
   const totalLostItems = activeItems.filter(i => i.type === 'LOST').length;
   const totalFoundItems = activeItems.filter(i => i.type === 'FOUND').length;
-  const totalRecoveredItems = activeItems.filter(i => i.status === 'RECOVERED').length;
+  const totalRecoveredItems = recoveredItems.length;
   const pendingVerificationItems = activeItems.filter(i => i.verificationStatus === 'PENDING').length;
   const pendingClaimsCount = claims.filter(c => c.status === 'PENDING').length;
   const totalDeletedCount = deletedItems.length;
@@ -160,8 +166,19 @@ export const AdminDashboardView: React.FC = () => {
   const displayItems = items.filter(item => {
     if (filterType === 'DELETED') {
       if (!item.deleted) return false;
+    } else if (filterType === 'RECOVERED') {
+      if (item.deleted || item.status !== 'RECOVERED') return false;
     } else {
-      if (item.deleted) return false;
+      // In Active Listings:
+      // Exclude soft-deleted, recovered, closed, and rejected reports
+      if (
+        item.deleted || 
+        item.status === 'RECOVERED' || 
+        item.status === 'CLOSED' || 
+        item.verificationStatus === 'REJECTED'
+      ) {
+        return false;
+      }
       if (filterType !== 'ALL' && item.type !== filterType) return false;
     }
 
@@ -380,15 +397,35 @@ export const AdminDashboardView: React.FC = () => {
         <button
           onClick={() => {
             setActiveTab('items');
-            if (filterType === 'DELETED') setFilterType('ALL');
+            if (filterType === 'DELETED' || filterType === 'RECOVERED') setFilterType('ALL');
           }}
           className={`pb-3 text-xs sm:text-sm font-bold transition-all relative ${
-            activeTab === 'items' && filterType !== 'DELETED'
+            activeTab === 'items' && filterType !== 'DELETED' && filterType !== 'RECOVERED'
               ? 'text-indigo-600 border-b-2 border-indigo-600'
               : 'text-slate-500 hover:text-slate-900'
           }`}
         >
           Active Listings ({activeItems.length})
+        </button>
+
+        <button
+          onClick={() => {
+            setActiveTab('items');
+            setFilterType('RECOVERED');
+          }}
+          className={`pb-3 text-xs sm:text-sm font-bold transition-all relative flex items-center space-x-1.5 ${
+            activeTab === 'items' && filterType === 'RECOVERED'
+              ? 'text-emerald-600 border-b-2 border-emerald-600'
+              : 'text-slate-500 hover:text-slate-900'
+          }`}
+        >
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Recovered Reports</span>
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+            totalRecoveredItems > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+          }`}>
+            {totalRecoveredItems}
+          </span>
         </button>
 
         <button
@@ -530,6 +567,19 @@ export const AdminDashboardView: React.FC = () => {
                 Found ({totalFoundItems})
               </button>
               <button
+                onClick={() => setFilterType('RECOVERED')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-colors ${
+                  filterType === 'RECOVERED' 
+                    ? 'bg-emerald-700 text-white' 
+                    : totalRecoveredItems > 0
+                      ? 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
+                      : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Recovered ({totalRecoveredItems})</span>
+              </button>
+              <button
                 onClick={() => setFilterType('DELETED')}
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 transition-colors ${
                   filterType === 'DELETED' 
@@ -568,6 +618,12 @@ export const AdminDashboardView: React.FC = () => {
                             <Trash2 className="w-8 h-8 text-slate-300 mx-auto" />
                             <p className="font-bold text-slate-700">No soft-deleted reports</p>
                             <p className="text-xs text-slate-400">All registered reports are currently active in the database.</p>
+                          </div>
+                        ) : filterType === 'RECOVERED' ? (
+                          <div className="space-y-1.5">
+                            <CheckCircle2 className="w-8 h-8 text-emerald-300 mx-auto" />
+                            <p className="font-bold text-slate-700">No recovered reports yet</p>
+                            <p className="text-xs text-slate-400">Items marked as recovered will appear here and are archived from active listings.</p>
                           </div>
                         ) : (
                           <div className="space-y-1.5">
@@ -648,6 +704,15 @@ export const AdminDashboardView: React.FC = () => {
                                 <span>Deleted by Admin</span>
                               </div>
                             </div>
+                          ) : item.status === 'RECOVERED' ? (
+                            <span className="inline-flex items-center space-x-1 text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded text-[10px] font-black border border-emerald-200">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              <span>Recovered</span>
+                            </span>
+                          ) : item.status === 'CLOSED' ? (
+                            <span className="text-slate-700 bg-slate-100 px-2 py-0.5 rounded text-[10px] font-bold border border-slate-200">
+                              Closed
+                            </span>
                           ) : item.isVerifiedByAdmin ? (
                             <span className="inline-flex items-center space-x-1 text-blue-700 bg-blue-50 px-2 py-0.5 rounded text-[10px] font-bold border border-blue-200">
                               <CheckCircle2 className="w-3 h-3" />

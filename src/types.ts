@@ -78,18 +78,44 @@ export interface Item {
   createdAt: string;
 }
 
-export type MatchStrength = 'Very Strong Match' | 'Strong Match' | 'Possible Match' | 'Low Match';
+export type MatchStrength = 'Very Strong Match' | 'Strong Match' | 'Possible Match' | 'Low Match' | 'High confidence' | 'Possible match' | 'Low confidence';
+export type MatchConfidenceLevel = 'High confidence' | 'Possible match' | 'Low confidence';
 
 export interface MatchScoreDetails {
-  categoryScore: number; // Max 30
+  categoryScore: number; // Max 25
   locationScore: number; // Max 25
-  dateScore: number;     // Max 20
-  colorScore: number;    // Max 15
-  keywordsScore: number; // Max 10
+  dateScore: number;     // Max 15
+  colorScore: number;    // Max 10
+  keywordsScore: number; // Max 25 (NLP Semantic & Text Similarity)
+  nlpScore?: number;     // Direct NLP Semantic similarity percentage (0 - 100)
   totalScore: number;    // Max 100
   matchStrength: MatchStrength;
+  confidenceLevel: MatchConfidenceLevel;
   isPossibleMatch: boolean; // >= 60 (Possible Match starts at 60%)
   matchedItem: Item;
+  matchFactors: string[];   // Important factors (e.g. "Similar item description", "Same color", "Same location", "Similar category")
+  explanation?: string;
+}
+
+export interface StoredMatch {
+  id: string; // `${lostItemId}_${foundItemId}` immutable report pair identifier
+  lostItemId: string;
+  foundItemId: string;
+  lostItem?: Item;
+  foundItem?: Item;
+  categoryScore: number;
+  locationScore: number;
+  dateScore: number;
+  colorScore: number;
+  keywordsScore: number;
+  nlpScore: number;
+  totalScore: number;
+  matchStrength: MatchStrength;
+  confidenceLevel: MatchConfidenceLevel;
+  isPossibleMatch: boolean;
+  matchFactors: string[];
+  explanation: string;
+  calculatedAt: string;
 }
 
 export interface Claim {

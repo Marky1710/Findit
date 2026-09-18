@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -18,8 +18,9 @@ import {
   validateStudentId 
 } from './src/utils/studentValidation';
 import { INITIAL_USERS, INITIAL_LOCATIONS } from './src/data/initialData';
-import { User, Item, Claim, Message, ActivityLog, ModerationReport, CampusLocation } from './src/types';
-import { calculateMatchScore } from './src/utils/matchingAlgorithm';
+import { User, Item, Claim, Message, ActivityLog, ModerationReport, CampusLocation, StoredMatch } from './src/types';
+import { calculateMatchScore, isReportEligibleForMatching } from './src/utils/matchingAlgorithm';
+import { calculateTextSemanticSimilarity } from './src/utils/nlpSemanticEngine';
 import { 
   requestEmailOtp, 
   verifyEmailOtp, 
@@ -57,6 +58,15 @@ function getDatabaseFilePath(): string {
 const DB_FILE = getDatabaseFilePath();
 
 // Database schema interface
+export interface SessionData {
+  token: string;
+  userId: string;
+  role: string;
+  email: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
 interface DatabaseSchema {
   users: User[];
   items: Item[];
@@ -65,6 +75,58 @@ interface DatabaseSchema {
   activities: ActivityLog[];
   moderation: ModerationReport[];
   locations: CampusLocation[];
+  matches?: StoredMatch[];
+  sessions?: Record<string, SessionData>;
+}
+
+/**
+ * Recalculates candidate match pairings in the persistent database.
+ * Requirements:
+ * - Deterministic, immutable report pair IDs: `${lost.id}_${found.id}`
+ * - Excludes DELETED, REJECTED, RECOVERED, and CLOSED reports
+ * - Prevents duplicate matches on page refresh
+ */
+function recalculateMatchesInDb(database: DatabaseSchema): StoredMatch[] {
+  const activeItems = (database.items || []).filter(i => isReportEligibleForMatching(i));
+  const lostItems = activeItems.filter(i => i.type === 'LOST');
+  const foundItems = activeItems.filter(i => i.type === 'FOUND');
+
+  const matchesMap = new Map<string, StoredMatch>();
+
+  for (const lost of lostItems) {
+    for (const found of foundItems) {
+      // Immutable report ID pair identifier
+      const matchId = `${lost.id}_${found.id}`;
+      const scoreDetails = calculateMatchScore(lost, found);
+
+      if (scoreDetails.isPossibleMatch) {
+        matchesMap.set(matchId, {
+          id: matchId,
+          lostItemId: lost.id,
+          foundItemId: found.id,
+          lostItem: lost,
+          foundItem: found,
+          categoryScore: scoreDetails.categoryScore,
+          locationScore: scoreDetails.locationScore,
+          dateScore: scoreDetails.dateScore,
+          colorScore: scoreDetails.colorScore,
+          keywordsScore: scoreDetails.keywordsScore,
+          nlpScore: scoreDetails.nlpScore || 0,
+          totalScore: scoreDetails.totalScore,
+          matchStrength: scoreDetails.matchStrength,
+          confidenceLevel: scoreDetails.confidenceLevel,
+          isPossibleMatch: scoreDetails.isPossibleMatch,
+          matchFactors: scoreDetails.matchFactors,
+          explanation: scoreDetails.explanation || '',
+          calculatedAt: new Date().toISOString()
+        });
+      }
+    }
+  }
+
+  const matchesList = Array.from(matchesMap.values()).sort((a, b) => b.totalScore - a.totalScore);
+  database.matches = matchesList;
+  return matchesList;
 }
 
 // Load database from file with robust defaults and purge fake/Kulkarni/seed accounts
@@ -107,8 +169,11 @@ function loadDatabase(): DatabaseSchema {
         messages: data.messages || [],
         activities: data.activities || [],
         moderation: data.moderation || [],
-        locations: (Array.isArray(data.locations) && data.locations.length > 0) ? data.locations : INITIAL_LOCATIONS
+        locations: (Array.isArray(data.locations) && data.locations.length > 0) ? data.locations : INITIAL_LOCATIONS,
+        matches: Array.isArray(data.matches) ? data.matches : [],
+        sessions: (typeof data.sessions === 'object' && data.sessions) ? data.sessions : {}
       };
+      recalculateMatchesInDb(cleanedDb);
       saveDatabase(cleanedDb);
       return cleanedDb;
     }
@@ -128,7 +193,9 @@ function loadDatabase(): DatabaseSchema {
     messages: [],
     activities: [],
     moderation: [],
-    locations: INITIAL_LOCATIONS
+    locations: INITIAL_LOCATIONS,
+    matches: [],
+    sessions: {}
   };
   saveDatabase(freshDb);
   return freshDb;
@@ -165,6 +232,124 @@ function saveDatabase(dbData: DatabaseSchema) {
 // In-memory reference synced to disk
 let db = loadDatabase();
 
+// Active server-side sessions
+const activeSessions = new Map<string, SessionData>();
+if (db.sessions) {
+  const now = Date.now();
+  for (const [token, session] of Object.entries(db.sessions)) {
+    if (session.expiresAt > now) {
+      activeSessions.set(token, session);
+    }
+  }
+}
+
+function createSession(user: User): string {
+  const token = 'iyc_sess_' + Math.random().toString(36).substring(2) + Date.now().toString(36) + Math.random().toString(36).substring(2);
+  const sessionData: SessionData = {
+    token,
+    userId: user.id,
+    role: user.role,
+    email: user.email || '',
+    createdAt: Date.now(),
+    expiresAt: Date.now() + (7 * 24 * 60 * 60 * 1000) // 7 days TTL
+  };
+  activeSessions.set(token, sessionData);
+  if (!db.sessions) db.sessions = {};
+  db.sessions[token] = sessionData;
+  saveDatabase(db);
+  return token;
+}
+
+function invalidateSession(token?: string, userId?: string) {
+  let changed = false;
+  if (token && activeSessions.has(token)) {
+    activeSessions.delete(token);
+    if (db.sessions && db.sessions[token]) {
+      delete db.sessions[token];
+      changed = true;
+    }
+  }
+  if (userId) {
+    for (const [t, s] of Array.from(activeSessions.entries())) {
+      if (s.userId === userId) {
+        activeSessions.delete(t);
+        if (db.sessions && db.sessions[t]) {
+          delete db.sessions[t];
+          changed = true;
+        }
+      }
+    }
+  }
+  if (changed) {
+    saveDatabase(db);
+  }
+}
+
+function getAuthenticatedUser(req: Request): User | null {
+  const authHeader = req.headers['authorization'];
+  let token = '';
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7).trim();
+  }
+  if (!token) {
+    token = (req.headers['x-session-token'] as string) || '';
+  }
+  if (!token && req.headers.cookie) {
+    const match = req.headers.cookie.match(/findit_session=([^;]+)/);
+    if (match) token = match[1].trim();
+  }
+  if (!token && req.query.token) {
+    token = (req.query.token as string).trim();
+  }
+
+  if (token) {
+    if (!activeSessions.has(token)) {
+      return null;
+    }
+    const session = activeSessions.get(token)!;
+    if (Date.now() > session.expiresAt) {
+      invalidateSession(token);
+      return null;
+    }
+    const user = db.users.find(u => u.id === session.userId);
+    if (!user || user.isDeleted || user.isBlocked) {
+      invalidateSession(token);
+      return null;
+    }
+    return user;
+  }
+
+  // Fallback for requests using user ID only if that user currently holds an active, unexpired session
+  const directId = (req.headers['x-user-id'] as string) || (req.query.userId as string);
+  if (directId) {
+    const hasActiveSession = Array.from(activeSessions.values()).some(
+      s => s.userId === directId && Date.now() <= s.expiresAt
+    );
+    if (hasActiveSession) {
+      const directUser = db.users.find(u => u.id === directId);
+      if (directUser && !directUser.isDeleted && !directUser.isBlocked) {
+        return directUser;
+      }
+    }
+  }
+
+  return null;
+}
+
+function checkAdminAuth(req: Request, res: Response): User | null {
+  const user = getAuthenticatedUser(req);
+  if (!user || user.role !== 'admin' || user.isBlocked || user.isDeleted) {
+    res.status(403).json({ success: false, error: 'Forbidden: Valid administrator authentication required.' });
+    return null;
+  }
+  // Double-check authorized admin identity (Mayur Suryavanshi sole authorized admin)
+  if (user.email !== 'suryavanshimayur187@gmail.com' && user.id !== 'user-admin-mayur') {
+    res.status(403).json({ success: false, error: 'Forbidden: Unauthorized administrator account.' });
+    return null;
+  }
+  return user;
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json());
@@ -185,18 +370,34 @@ async function startServer() {
 
   // Current authenticated user session verification
   app.get('/api/auth/me', (req: Request, res: Response) => {
-    const userId = (req.query.userId as string) || (req.headers['x-user-id'] as string);
-    if (!userId) {
-      res.status(401).json({ success: false, error: 'User ID required.' });
-      return;
-    }
-    const user = db.users.find(u => u.id === userId);
+    const user = getAuthenticatedUser(req);
     if (!user) {
-      res.status(404).json({ success: false, error: 'User account not found in persistent database.' });
+      res.status(401).json({ success: false, error: 'Unauthenticated session.' });
       return;
     }
     const { password: _, ...safeUser } = user;
     res.json({ success: true, user: safeUser });
+  });
+
+  // Real backend logout: invalidates session and clears cookie
+  app.post('/api/auth/logout', (req: Request, res: Response) => {
+    let token = '';
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7).trim();
+    }
+    if (!token) token = (req.headers['x-session-token'] as string) || '';
+    if (!token && req.headers.cookie) {
+      const match = req.headers.cookie.match(/findit_session=([^;]+)/);
+      if (match) token = match[1].trim();
+    }
+    if (!token && req.body && req.body.token) token = req.body.token;
+    
+    const userId = (req.body && req.body.userId) || (req.headers['x-user-id'] as string);
+
+    invalidateSession(token, userId);
+    res.clearCookie('findit_session', { path: '/' });
+    res.json({ success: true, message: 'Logged out successfully.' });
   });
 
   // Course configuration (Central source of truth)
@@ -478,6 +679,11 @@ async function startServer() {
       return;
     }
 
+    if (student.isDeleted) {
+      res.status(404).json({ success: false, error: 'Student account has been deactivated or removed.' });
+      return;
+    }
+
     if (student.isBlocked) {
       res.status(403).json({ success: false, error: 'Your account has been blocked by the Administrator.' });
       return;
@@ -508,8 +714,10 @@ async function startServer() {
       return;
     }
 
+    const sessionToken = createSession(student);
+    res.cookie('findit_session', sessionToken, { httpOnly: false, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 });
     const { password: _, ...safeUser } = student;
-    res.json({ success: true, user: safeUser });
+    res.json({ success: true, token: sessionToken, user: safeUser });
   });
 
   // ----------------------------------------------------
@@ -599,6 +807,11 @@ async function startServer() {
       return;
     }
 
+    if (staff.isDeleted) {
+      res.status(404).json({ success: false, error: 'Staff account has been deactivated or removed.' });
+      return;
+    }
+
     if (staff.isBlocked) {
       res.status(403).json({ success: false, error: 'Your account has been blocked by the Administrator.' });
       return;
@@ -622,8 +835,10 @@ async function startServer() {
       return;
     }
 
+    const sessionToken = createSession(staff);
+    res.cookie('findit_session', sessionToken, { httpOnly: false, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 });
     const { password: _, ...safeUser } = staff;
-    res.json({ success: true, user: safeUser });
+    res.json({ success: true, token: sessionToken, user: safeUser });
   });
 
   // ----------------------------------------------------
@@ -642,7 +857,7 @@ async function startServer() {
       )
     );
 
-    if (!admin) {
+    if (!admin || admin.isDeleted) {
       res.status(404).json({ success: false, error: 'Administrator account not recognized.' });
       return;
     }
@@ -664,16 +879,20 @@ async function startServer() {
       return;
     }
 
+    const sessionToken = createSession(admin);
+    res.cookie('findit_session', sessionToken, { httpOnly: false, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 });
     const { password: _, ...safeUser } = admin;
-    res.json({ success: true, user: safeUser });
+    res.json({ success: true, token: sessionToken, user: safeUser });
   });
 
   // ----------------------------------------------------
   // 5. USERS LIST & STATS (Real Database Stats Only)
   // ----------------------------------------------------
   app.get('/api/users', (req: Request, res: Response) => {
-    // Return sanitized users without passwords and without AI avatars
-    const safeUsers = db.users.map(({ password: _, avatar: __, ...u }) => u);
+    // Return non-deleted sanitized users without passwords and without AI avatars
+    const safeUsers = db.users
+      .filter(u => !u.isDeleted)
+      .map(({ password: _, avatar: __, ...u }) => u);
     res.json(safeUsers);
   });
 
@@ -684,8 +903,8 @@ async function startServer() {
     const foundCount = activeItems.filter(i => i.type === 'FOUND').length;
     const recoveredCount = activeItems.filter(i => i.status === 'RECOVERED').length;
     const claimsCount = db.claims.length;
-    const studentsCount = db.users.filter(u => u.role === 'student').length;
-    const staffCount = db.users.filter(u => u.role === 'staff').length;
+    const studentsCount = db.users.filter(u => !u.isDeleted && u.role === 'student').length;
+    const staffCount = db.users.filter(u => !u.isDeleted && u.role === 'staff').length;
 
     res.json({
       lostItems: lostCount,
@@ -694,7 +913,7 @@ async function startServer() {
       totalClaims: claimsCount,
       totalStudents: studentsCount,
       totalStaff: staffCount,
-      totalUsers: db.users.length,
+      totalUsers: db.users.filter(u => !u.isDeleted).length,
       deletedItems: db.items.filter(i => i.deleted).length
     });
   });
@@ -705,23 +924,44 @@ async function startServer() {
   app.get('/api/items', (req: Request, res: Response) => {
     const adminId = (req.query.adminId as string) || (req.headers['x-admin-id'] as string) || (req.headers['x-user-id'] as string);
     const includeDeleted = req.query.includeDeleted === 'true';
+    const statusQuery = (req.query.status as string || '').toUpperCase();
+    const viewQuery = (req.query.view as string || '').toLowerCase();
+    const activeOnly = req.query.activeOnly === 'true';
 
     // Verify if requester is an actual authenticated admin
-    const isAdmin = adminId ? db.users.some(u => (u.id === adminId || u.email === adminId) && u.role === 'admin') : false;
+    const authUser = getAuthenticatedUser(req);
+    const isAdmin = (authUser && authUser.role === 'admin') || 
+      (adminId ? db.users.some(u => (u.id === adminId || u.email === adminId) && u.role === 'admin') : false);
 
-    if (isAdmin && includeDeleted) {
-      // Admin requesting all items including soft-deleted ones
-      res.json(db.items);
-    } else {
+    let result = db.items;
+
+    if (!isAdmin || !includeDeleted) {
       // Normal students, staff, and public visitors strictly never receive deleted items
-      res.json(db.items.filter(item => !item.deleted));
+      result = result.filter(item => !item.deleted);
     }
+
+    // Backend filtering for Active Listings:
+    // Exclude RECOVERED, CLOSED, and REJECTED reports from active listings
+    if (viewQuery === 'activelistings' || statusQuery === 'ACTIVE_LISTINGS' || activeOnly) {
+      result = result.filter(item => 
+        !item.deleted && 
+        item.status !== 'RECOVERED' && 
+        item.status !== 'CLOSED' && 
+        item.verificationStatus !== 'REJECTED'
+      );
+    } else if (statusQuery === 'RECOVERED' || viewQuery === 'recovered') {
+      result = result.filter(item => !item.deleted && item.status === 'RECOVERED');
+    }
+
+    res.json(result);
   });
 
   app.get('/api/items/:id', (req: Request, res: Response) => {
     const { id } = req.params;
     const adminId = (req.query.adminId as string) || (req.headers['x-admin-id'] as string) || (req.headers['x-user-id'] as string);
-    const isAdmin = adminId ? db.users.some(u => (u.id === adminId || u.email === adminId) && u.role === 'admin') : false;
+    const authUser = getAuthenticatedUser(req);
+    const isAdmin = (authUser && authUser.role === 'admin') || 
+      (adminId ? db.users.some(u => (u.id === adminId || u.email === adminId) && u.role === 'admin') : false);
 
     const item = db.items.find(i => i.id === id);
     if (!item) {
@@ -744,6 +984,24 @@ async function startServer() {
       return;
     }
 
+    // Verify poster account status if user ID provided
+    if (itemData.userId) {
+      const poster = db.users.find(u => u.id === itemData.userId);
+      if (poster) {
+        if (poster.isBlocked) {
+          res.status(403).json({ success: false, error: 'Your account has been blocked by the Administrator.' });
+          return;
+        }
+        if (poster.isRestricted) {
+          res.status(403).json({ 
+            success: false, 
+            error: 'Your posting privileges have been restricted by the Administrator. You cannot create new listings.' 
+          });
+          return;
+        }
+      }
+    }
+
     const newItem: Item = {
       ...itemData,
       id: itemData.id || `item-${Date.now()}`,
@@ -760,6 +1018,7 @@ async function startServer() {
     } else {
       db.items.unshift(newItem);
     }
+    recalculateMatchesInDb(db);
     saveDatabase(db);
     res.status(201).json({ success: true, item: newItem });
   });
@@ -774,6 +1033,7 @@ async function startServer() {
     }
 
     db.items[index] = { ...db.items[index], ...updates };
+    recalculateMatchesInDb(db);
     saveDatabase(db);
     res.json({ success: true, item: db.items[index] });
   });
@@ -811,6 +1071,7 @@ async function startServer() {
     };
     db.activities.unshift(log);
 
+    recalculateMatchesInDb(db);
     saveDatabase(db);
     res.json({ success: true, item });
   });
@@ -849,6 +1110,7 @@ async function startServer() {
     };
     db.activities.unshift(log);
 
+    recalculateMatchesInDb(db);
     saveDatabase(db);
     res.json({ success: true, item });
   });
@@ -885,6 +1147,7 @@ async function startServer() {
     };
     db.activities.unshift(log);
 
+    recalculateMatchesInDb(db);
     saveDatabase(db);
     res.json({ success: true, item });
   });
@@ -979,6 +1242,7 @@ async function startServer() {
     };
     db.activities.unshift(log);
 
+    recalculateMatchesInDb(db);
     saveDatabase(db);
     res.json({ 
       success: true, 
@@ -1028,6 +1292,7 @@ async function startServer() {
     };
     db.activities.unshift(log);
 
+    recalculateMatchesInDb(db);
     saveDatabase(db);
     res.json({ 
       success: true, 
@@ -1040,78 +1305,182 @@ async function startServer() {
   // ADMIN USER MANAGEMENT
   // ----------------------------------------------------
 
-  const checkAdminAuth = (req: Request, res: Response) => {
-    const adminId = req.headers['x-admin-id'] as string;
-    const adminUser = db.users.find(u => u.id === adminId && u.role === 'admin');
-    if (!adminUser) {
-      res.status(403).json({ success: false, error: 'Forbidden: Admin access required.' });
-      return null;
-    }
-    return adminUser;
-  };
-
   app.put('/api/admin/users/:userId/block', (req: Request, res: Response) => {
-    if (!checkAdminAuth(req, res)) return;
+    const adminUser = checkAdminAuth(req, res);
+    if (!adminUser) return;
     const { userId } = req.params;
     const targetUser = db.users.find(u => u.id === userId);
-    if (!targetUser) { res.status(404).json({ success: false, error: 'User not found.' }); return; }
-    if (targetUser.role === 'admin') { res.status(403).json({ success: false, error: 'Cannot block an admin account.' }); return; }
+    if (!targetUser || targetUser.isDeleted) { 
+      res.status(404).json({ success: false, error: 'User not found.' }); 
+      return; 
+    }
+    if (targetUser.role === 'admin' || targetUser.id === adminUser.id) { 
+      res.status(403).json({ success: false, error: 'Cannot block an administrator account.' }); 
+      return; 
+    }
     
     targetUser.isBlocked = true;
+    targetUser.status = 'BLOCKED';
+    // Invalidate all active sessions for this blocked user immediately
+    invalidateSession(undefined, targetUser.id);
+
+    const log: ActivityLog = {
+      id: `act-${Date.now()}`,
+      userId: adminUser.id,
+      title: 'User Account Blocked',
+      description: `Administrator ${adminUser.name} blocked user ${targetUser.name} (${targetUser.email || targetUser.studentId}).`,
+      timestamp: new Date().toISOString(),
+      type: 'MODERATION'
+    };
+    db.activities.unshift(log);
+
     saveDatabase(db);
-    res.json({ success: true, user: targetUser });
+    const { password: _, ...safeUser } = targetUser;
+    res.json({ success: true, user: safeUser, message: `User ${targetUser.name} has been blocked.` });
   });
 
   app.put('/api/admin/users/:userId/unblock', (req: Request, res: Response) => {
-    if (!checkAdminAuth(req, res)) return;
+    const adminUser = checkAdminAuth(req, res);
+    if (!adminUser) return;
     const { userId } = req.params;
     const targetUser = db.users.find(u => u.id === userId);
-    if (!targetUser) { res.status(404).json({ success: false, error: 'User not found.' }); return; }
+    if (!targetUser || targetUser.isDeleted) { 
+      res.status(404).json({ success: false, error: 'User not found.' }); 
+      return; 
+    }
     
     targetUser.isBlocked = false;
+    targetUser.status = targetUser.isRestricted ? 'RESTRICTED' : 'ACTIVE';
+
+    const log: ActivityLog = {
+      id: `act-${Date.now()}`,
+      userId: adminUser.id,
+      title: 'User Account Unblocked',
+      description: `Administrator ${adminUser.name} unblocked user ${targetUser.name} (${targetUser.email || targetUser.studentId}).`,
+      timestamp: new Date().toISOString(),
+      type: 'MODERATION'
+    };
+    db.activities.unshift(log);
+
     saveDatabase(db);
-    res.json({ success: true, user: targetUser });
+    const { password: _, ...safeUser } = targetUser;
+    res.json({ success: true, user: safeUser, message: `User ${targetUser.name} has been unblocked.` });
   });
 
   app.put('/api/admin/users/:userId/restrict', (req: Request, res: Response) => {
-    if (!checkAdminAuth(req, res)) return;
+    const adminUser = checkAdminAuth(req, res);
+    if (!adminUser) return;
     const { userId } = req.params;
     const targetUser = db.users.find(u => u.id === userId);
-    if (!targetUser) { res.status(404).json({ success: false, error: 'User not found.' }); return; }
-    if (targetUser.role === 'admin') { res.status(403).json({ success: false, error: 'Cannot restrict an admin account.' }); return; }
+    if (!targetUser || targetUser.isDeleted) { 
+      res.status(404).json({ success: false, error: 'User not found.' }); 
+      return; 
+    }
+    if (targetUser.role === 'admin' || targetUser.id === adminUser.id) { 
+      res.status(403).json({ success: false, error: 'Cannot restrict an administrator account.' }); 
+      return; 
+    }
     
     targetUser.isRestricted = true;
+    if (!targetUser.isBlocked) {
+      targetUser.status = 'RESTRICTED';
+    }
+
+    const log: ActivityLog = {
+      id: `act-${Date.now()}`,
+      userId: adminUser.id,
+      title: 'User Account Privileges Restricted',
+      description: `Administrator ${adminUser.name} restricted posting privileges for user ${targetUser.name}.`,
+      timestamp: new Date().toISOString(),
+      type: 'MODERATION'
+    };
+    db.activities.unshift(log);
+
     saveDatabase(db);
-    res.json({ success: true, user: targetUser });
+    const { password: _, ...safeUser } = targetUser;
+    res.json({ success: true, user: safeUser, message: `User ${targetUser.name} posting privileges restricted.` });
   });
 
   app.put('/api/admin/users/:userId/unrestrict', (req: Request, res: Response) => {
-    if (!checkAdminAuth(req, res)) return;
+    const adminUser = checkAdminAuth(req, res);
+    if (!adminUser) return;
     const { userId } = req.params;
     const targetUser = db.users.find(u => u.id === userId);
-    if (!targetUser) { res.status(404).json({ success: false, error: 'User not found.' }); return; }
+    if (!targetUser || targetUser.isDeleted) { 
+      res.status(404).json({ success: false, error: 'User not found.' }); 
+      return; 
+    }
     
     targetUser.isRestricted = false;
+    if (!targetUser.isBlocked) {
+      targetUser.status = 'ACTIVE';
+    }
+
+    const log: ActivityLog = {
+      id: `act-${Date.now()}`,
+      userId: adminUser.id,
+      title: 'User Account Restrictions Lifted',
+      description: `Administrator ${adminUser.name} restored full privileges for user ${targetUser.name}.`,
+      timestamp: new Date().toISOString(),
+      type: 'MODERATION'
+    };
+    db.activities.unshift(log);
+
     saveDatabase(db);
-    res.json({ success: true, user: targetUser });
+    const { password: _, ...safeUser } = targetUser;
+    res.json({ success: true, user: safeUser, message: `Restrictions lifted for ${targetUser.name}.` });
   });
 
   app.delete('/api/admin/users/:userId', (req: Request, res: Response) => {
-    if (!checkAdminAuth(req, res)) return;
+    const adminUser = checkAdminAuth(req, res);
+    if (!adminUser) return;
     const { userId } = req.params;
     const targetUser = db.users.find(u => u.id === userId);
-    if (!targetUser) { res.status(404).json({ success: false, error: 'User not found.' }); return; }
-    if (targetUser.role === 'admin') { res.status(403).json({ success: false, error: 'Cannot delete an admin account.' }); return; }
+    if (!targetUser) { 
+      res.status(404).json({ success: false, error: 'User not found.' }); 
+      return; 
+    }
+    if (targetUser.role === 'admin' || targetUser.id === adminUser.id) { 
+      res.status(403).json({ success: false, error: 'Cannot delete an administrator account.' }); 
+      return; 
+    }
 
-    // Hard delete user
-    db.users = db.users.filter(u => u.id !== userId);
-    // Mark items as deleted to prevent orphan references
-    db.items = db.items.map(i => i.userId === userId ? { ...i, deleted: true } : i);
-    // Remove claims tied to this user to avoid broken claims state
-    db.claims = db.claims.filter(c => c.claimantId !== userId && c.ownerId !== userId);
+    // Invalidate sessions immediately
+    invalidateSession(undefined, targetUser.id);
+
+    // Soft delete user and deactivate
+    targetUser.isDeleted = true;
+    targetUser.deletedAt = new Date().toISOString();
+    targetUser.isBlocked = true;
+    targetUser.status = 'BLOCKED';
+    delete targetUser.password;
+
+    // Soft delete all active items created by this user
+    db.items = db.items.map(i => {
+      if (i.userId === userId && !i.deleted) {
+        return {
+          ...i,
+          deleted: true,
+          deletedAt: new Date().toISOString(),
+          deletedBy: adminUser.id
+        };
+      }
+      return i;
+    });
+
+    const log: ActivityLog = {
+      id: `act-${Date.now()}`,
+      userId: adminUser.id,
+      title: 'User Account Deleted',
+      description: `Administrator ${adminUser.name} deleted user ${targetUser.name} (${targetUser.email || targetUser.studentId}).`,
+      timestamp: new Date().toISOString(),
+      type: 'MODERATION'
+    };
+    db.activities.unshift(log);
     
+    recalculateMatchesInDb(db);
     saveDatabase(db);
-    res.json({ success: true, message: 'User deleted successfully.' });
+    res.json({ success: true, message: `User ${targetUser.name} was successfully deleted.` });
   });
 
   // ----------------------------------------------------
@@ -1496,30 +1865,69 @@ async function startServer() {
   });
 
   // ----------------------------------------------------
-  // 12. MATCHES ENGINE (Server Calculated)
+  // 12. MATCHES ENGINE (Server Calculated & Persistent)
   // ----------------------------------------------------
   app.get('/api/matches', (req: Request, res: Response) => {
-    const activeItems = db.items.filter(i => !i.deleted);
-    const lostItems = activeItems.filter(i => i.type === 'LOST' && i.status !== 'RECOVERED');
-    const foundItems = activeItems.filter(i => i.type === 'FOUND' && i.status !== 'RECOVERED');
+    // Recalculate against persistent database to ensure fresh state and immutable IDs
+    const matches = recalculateMatchesInDb(db);
+    saveDatabase(db);
+    res.json(matches);
+  });
 
-    const matchesList: any[] = [];
-    for (const lost of lostItems) {
-      for (const found of foundItems) {
-        const scoreDetails = calculateMatchScore(lost, found);
-        if (scoreDetails.isPossibleMatch) {
-          matchesList.push({
-            lostItemId: lost.id,
-            foundItemId: found.id,
-            lostItem: lost,
-            foundItem: found,
-            ...scoreDetails
+  // Server-side semantic similarity comparison endpoint (Keeps credentials server-side, with deterministic fallback)
+  app.post('/api/nlp/semantic-similarity', async (req: Request, res: Response) => {
+    const { textA, textB, itemA, itemB } = req.body;
+    if (!textA && !textB && !itemA && !itemB) {
+      res.status(400).json({ success: false, error: 'Missing text or item definitions.' });
+      return;
+    }
+
+    const deterministic = itemA && itemB
+      ? calculateTextSemanticSimilarity(itemA, itemB)
+      : calculateTextSemanticSimilarity(
+          { itemName: textA || '', description: textA || '' } as any,
+          { itemName: textB || '', description: textB || '' } as any
+        );
+
+    // If server has GEMINI_API_KEY, optionally query for AI reasoning while preserving fallback
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        const { GoogleGenAI } = await import('@google/genai');
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const prompt = `Compare these two Lost & Found item reports from Ismail Yusuf College and evaluate their semantic similarity.
+Description A: "${textA || itemA?.description || itemA?.itemName}"
+Description B: "${textB || itemB?.description || itemB?.itemName}"
+Return JSON only: { "similarityScore": number (0-100), "reason": string }`;
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: prompt
+        });
+
+        const text = response.text || '';
+        const match = text.match(/\{[\s\S]*\}/);
+        if (match) {
+          const parsed = JSON.parse(match[0]);
+          res.json({
+            success: true,
+            score: typeof parsed.similarityScore === 'number' ? parsed.similarityScore : deterministic.score,
+            explanation: parsed.reason || deterministic.explanation,
+            method: 'gemini_api_server_side'
           });
+          return;
         }
+      } catch (err) {
+        console.warn('External semantic API request failed; falling back to deterministic local NLP engine:', err);
       }
     }
 
-    res.json(matchesList);
+    res.json({
+      success: true,
+      score: deterministic.score,
+      explanation: deterministic.explanation,
+      sharedConcept: deterministic.sharedConceptName,
+      method: 'deterministic_nlp_engine'
+    });
   });
 
   // Reset to default clean state
@@ -1539,6 +1947,21 @@ async function startServer() {
     };
     saveDatabase(db);
     res.json({ success: true, message: 'Database reset to clean official state.' });
+  });
+
+  // Catch-all 404 handler for any unhandled /api routes to guarantee JSON response and prevent HTML fallback
+  app.all('/api/*', (req: Request, res: Response) => {
+    res.status(404).json({ success: false, error: `API endpoint ${req.method} ${req.path} not found.` });
+  });
+
+  // Dedicated API error handler to guarantee JSON error response
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/api')) {
+      console.error('API Error handler caught:', err);
+      res.status(500).json({ success: false, error: err?.message || 'Internal server error' });
+      return;
+    }
+    next(err);
   });
 
   // ----------------------------------------------------

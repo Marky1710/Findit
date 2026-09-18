@@ -1,277 +1,71 @@
-import { Item, MatchScoreDetails, MatchStrength } from '../types';
+import { Item, MatchScoreDetails, MatchStrength, MatchConfidenceLevel } from '../types';
+import { 
+  calculateTextSemanticSimilarity, 
+  extractEntities, 
+  COLOR_TAXONOMY,
+  preprocessText,
+  lemmatizeToken
+} from './nlpSemanticEngine';
 
 /**
- * Color family mappings for semantic color matching (e.g. Silver = Grey, Navy = Blue)
- */
-const COLOR_FAMILIES: Record<string, string[]> = {
-  grey: ['grey', 'gray', 'silver', 'metallic', 'steel', 'titanium'],
-  silver: ['silver', 'grey', 'gray', 'steel', 'metallic', 'aluminum'],
-  blue: ['blue', 'navy', 'cyan', 'sky', 'indigo', 'azure', 'denim'],
-  black: ['black', 'dark', 'charcoal', 'matte black', 'obsidian'],
-  white: ['white', 'cream', 'off-white', 'ivory'],
-  red: ['red', 'maroon', 'crimson', 'burgundy', 'rose', 'pink'],
-  brown: ['brown', 'tan', 'beige', 'khaki', 'coffee', 'chocolate'],
-  green: ['green', 'olive', 'mint', 'emerald', 'teal'],
-  yellow: ['yellow', 'golden', 'gold', 'amber', 'mustard'],
-  orange: ['orange', 'peach', 'coral'],
-  purple: ['purple', 'violet', 'lavender', 'magenta']
-};
-
-/**
- * Known object sub-clusters to verify physical compatibility and prevent false positives
- * (e.g. Phone vs Mouse in the same room on the same day must not score as a match)
- */
-const OBJECT_CLUSTERS: Record<string, string[]> = {
-  phone: ['phone', 'iphone', 'mobile', 'smartphone', 'android', 'samsung', 'oneplus', 'pixel', 'redmi', 'realme'],
-  laptop: ['laptop', 'notebook', 'macbook', 'chromebook', 'thinkpad', 'dell', 'hp', 'lenovo', 'asus', 'acer'],
-  audio: ['earbuds', 'earphones', 'headphones', 'airpods', 'headset', 'airdopes', 'buds', 'earphone', 'headphone'],
-  mouse: ['mouse', 'trackpad', 'pointer'],
-  keyboard: ['keyboard', 'keypad'],
-  calculator: ['calculator', 'casio', 'scientific'],
-  watch: ['watch', 'smartwatch', 'band', 'fitbit', 'titan', 'fastrack'],
-  charger: ['charger', 'cable', 'adapter', 'wire', 'powerbank', 'cord'],
-  card: ['card', 'id', 'license', 'pass', 'aadhaar', 'ticket', 'identity', 'hall'],
-  bottle: ['bottle', 'flask', 'sipper', 'thermos', 'milton', 'tumbler'],
-  umbrella: ['umbrella', 'raincoat'],
-  keys: ['key', 'keys', 'keychain', 'bunch'],
-  wallet: ['wallet', 'purse', 'pouch', 'billfold'],
-  bag: ['bag', 'backpack', 'sack', 'rucksack', 'duffel', 'briefcase'],
-  book: ['book', 'notebook', 'register', 'diary', 'journal', 'textbook', 'notes']
-};
-
-/**
- * Calculates a match score between two items (usually one LOST and one FOUND)
- * Based on the TY BSc CS Mini Project Automated Matching Algorithm:
- * - Category Match: 30 points
- * - Location Match: 25 points
- * - Date Proximity: 20 points
- * - Color Match: 15 points
- * - Keyword / Title Similarity: 10 points
- * Total: 100 points.
- * Classifications:
- * - 85–100 points: Strong Match
- * - 60–84 points:  Possible Match (Threshold >= 60)
- * - Below 60 points: Low Match
- */
-export function calculateMatchScore(itemA: Item, itemB: Item): MatchScoreDetails {
-  // Check object cluster compatibility
-  const clusterA = detectObjectCluster(itemA);
-  const clusterB = detectObjectCluster(itemB);
-  const hasConflictingClusters = clusterA && clusterB && clusterA !== clusterB;
-
-  // 1. Category Matching (Max 30 points)
-  let categoryScore = 0;
-  const catA = itemA.category.toLowerCase().trim();
-  const catB = itemB.category.toLowerCase().trim();
-
-  if (catA === catB) {
-    if (hasConflictingClusters) {
-      // Incompatible object types under broad generic category (e.g. Phone vs Mouse in Electronics)
-      categoryScore = 10;
-    } else {
-      categoryScore = 30;
-    }
-  } else {
-    // Related categories partial credit
-    const relatedGroups: string[][] = [
-      ['id cards', 'documents', 'wallet'],
-      ['books & stationery', 'documents'],
-      ['electronics', 'other'],
-      ['clothing', 'bags'],
-      ['wallet', 'bags']
-    ];
-
-    for (const group of relatedGroups) {
-      if (group.includes(catA) && group.includes(catB)) {
-        // If both are documents/cards or share cluster
-        if (clusterA && clusterB && clusterA === clusterB) {
-          categoryScore = 25;
-        } else {
-          categoryScore = 18;
-        }
-        break;
-      }
-    }
-  }
-
-  // 2. Location Matching (Max 25 points)
-  const locationScore = calculateLocationScore(itemA, itemB);
-
-  // 3. Date Proximity (Max 20 points)
-  // Rubric:
-  // - Same date: 20 pts
-  // - Within 1 day: 18 pts
-  // - Within 3 days: 15 pts
-  // - Within 7 days: 10 pts
-  // - Within 14 days: 5 pts
-  // - More than 14 days: 0 pts
-  let dateScore = 0;
-  try {
-    const timeA = new Date(itemA.date).getTime();
-    const timeB = new Date(itemB.date).getTime();
-    const diffDays = Math.round(Math.abs(timeA - timeB) / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 0) {
-      dateScore = 20;
-    } else if (diffDays <= 1) {
-      dateScore = 18;
-    } else if (diffDays <= 3) {
-      dateScore = 15;
-    } else if (diffDays <= 7) {
-      dateScore = 10;
-    } else if (diffDays <= 14) {
-      dateScore = 5;
-    } else {
-      dateScore = 0;
-    }
-  } catch {
-    dateScore = 10;
-  }
-
-  // 4. Color Matching (Max 15 points)
-  let colorScore = 0;
-  const colorA = (itemA.color || '').trim().toLowerCase();
-  const colorB = (itemB.color || '').trim().toLowerCase();
-
-  if (colorA && colorB && colorA !== 'other' && colorB !== 'other') {
-    if (colorA === colorB || colorA.includes(colorB) || colorB.includes(colorA)) {
-      colorScore = 15;
-    } else if (areColorsInSameFamily(colorA, colorB)) {
-      colorScore = 14;
-    } else if (
-      itemA.description.toLowerCase().includes(colorB) ||
-      itemB.description.toLowerCase().includes(colorA) ||
-      itemA.itemName.toLowerCase().includes(colorB) ||
-      itemB.itemName.toLowerCase().includes(colorA)
-    ) {
-      colorScore = 12;
-    }
-  } else if (!colorA || !colorB || colorA === 'other' || colorB === 'other') {
-    colorScore = 5;
-  }
-
-  // 5. Keyword & Title Similarity (Max 10 points)
-  let keywordsScore = 0;
-  const titleTokensA = extractTokens(itemA.itemName);
-  const titleTokensB = extractTokens(itemB.itemName);
-  const titleShared = titleTokensA.filter(t => titleTokensB.includes(t));
-
-  const allTokensA = extractTokens(`${itemA.itemName} ${itemA.description} ${itemA.keywords || ''}`);
-  const allTokensB = extractTokens(`${itemB.itemName} ${itemB.description} ${itemB.keywords || ''}`);
-  const matchingTokens = allTokensA.filter(token => allTokensB.includes(token));
-
-  // High title affinity check
-  if (titleShared.length >= 2 || (clusterA && clusterB && clusterA === clusterB)) {
-    keywordsScore = 10;
-  } else if (titleShared.length === 1) {
-    keywordsScore = 8;
-  } else if (matchingTokens.length >= 3) {
-    keywordsScore = 10;
-  } else if (matchingTokens.length === 2) {
-    keywordsScore = 7;
-  } else if (matchingTokens.length === 1) {
-    keywordsScore = 4;
-  }
-
-  // Calculate raw total
-  let totalScore = Math.round(categoryScore + locationScore + dateScore + colorScore + keywordsScore);
-
-  // False positive safeguard: If clusters directly conflict and there is 0 keyword and 0 color overlap,
-  // cap total score below the 60% threshold
-  if (hasConflictingClusters && keywordsScore === 0 && colorScore === 0) {
-    totalScore = Math.min(totalScore, 45);
-  }
-
-  totalScore = Math.min(100, Math.max(0, totalScore));
-
-  // Classifications matching Section 2 & 11:
-  // 85–100 points: Strong Match
-  // 60–84 points:  Possible Match (Threshold >= 60)
-  // Below 60 points: Low Match
-  let matchStrength: MatchStrength = 'Low Match';
-  if (totalScore >= 85) {
-    matchStrength = 'Strong Match';
-  } else if (totalScore >= 60) {
-    matchStrength = 'Possible Match';
-  }
-
-  const isPossibleMatch = totalScore >= 60;
-
-  return {
-    categoryScore,
-    locationScore,
-    dateScore,
-    colorScore,
-    keywordsScore,
-    totalScore,
-    matchStrength,
-    isPossibleMatch,
-    matchedItem: itemB
-  };
-}
-
-export function getMatchStrengthDetails(strength: MatchStrength) {
-  switch (strength) {
-    case 'Very Strong Match':
-    case 'Strong Match':
-      return {
-        label: 'Strong Match',
-        badgeBg: 'bg-emerald-600 text-white',
-        cardBorder: 'border-emerald-400 ring-1 ring-emerald-400/30',
-        textClass: 'text-emerald-700 font-bold',
-        pillBg: 'bg-emerald-100 text-emerald-800'
-      };
-    case 'Possible Match':
-      return {
-        label: 'Possible Match',
-        badgeBg: 'bg-blue-600 text-white',
-        cardBorder: 'border-blue-300',
-        textClass: 'text-blue-700 font-semibold',
-        pillBg: 'bg-blue-100 text-blue-800'
-      };
-    default:
-      return {
-        label: 'Low Match',
-        badgeBg: 'bg-slate-500 text-white',
-        cardBorder: 'border-slate-200',
-        textClass: 'text-slate-600',
-        pillBg: 'bg-slate-100 text-slate-700'
-      };
-  }
-}
-
-/**
- * Detects whether an item belongs to a recognized physical object cluster
- */
-function detectObjectCluster(item: Item): string | null {
-  const combinedText = `${item.itemName} ${item.description} ${item.keywords || ''}`.toLowerCase();
-  
-  for (const [clusterKey, keywords] of Object.entries(OBJECT_CLUSTERS)) {
-    for (const kw of keywords) {
-      const regex = new RegExp(`\\b${kw}\\b`, 'i');
-      if (regex.test(combinedText)) {
-        return clusterKey;
-      }
-    }
-  }
-  return null;
-}
-
-/**
- * Checks if two color strings belong to the same perceptual color family (e.g. Silver = Grey)
+ * Checks if two color strings belong to the same perceptual color family (e.g. Silver = Grey, Navy = Blue)
  */
 function areColorsInSameFamily(colA: string, colB: string): boolean {
-  for (const list of Object.values(COLOR_FAMILIES)) {
-    const hasA = list.some(c => colA.includes(c));
-    const hasB = list.some(c => colB.includes(c));
+  const normA = (colA || '').toLowerCase().trim();
+  const normB = (colB || '').toLowerCase().trim();
+  if (!normA || !normB) return false;
+  if (normA === normB) return true;
+
+  for (const list of Object.values(COLOR_TAXONOMY)) {
+    const hasA = list.some(c => normA.includes(c));
+    const hasB = list.some(c => normB.includes(c));
     if (hasA && hasB) return true;
   }
   return false;
 }
 
 /**
- * Helper to identify specific Computer Science department rooms
+ * Checks if a report is eligible for matching according to Section 13 & 14 rules:
+ * - NOT deleted (item.deleted !== true)
+ * - NOT rejected (item.verificationStatus !== 'REJECTED')
+ * - NOT recovered (item.status !== 'RECOVERED')
+ * - NOT closed (item.status !== 'CLOSED')
  */
+export function isReportEligibleForMatching(item: Item): boolean {
+  if (!item) return false;
+  if (item.deleted) return false;
+  if (item.verificationStatus === 'REJECTED') return false;
+  if (item.status === 'RECOVERED' || item.status === 'CLOSED') return false;
+  return true;
+}
+
+/**
+ * Normalizes campus location names and abbreviations
+ */
+function cleanLocation(str: string): string {
+  if (!str) return '';
+  let text = str.toLowerCase();
+
+  // Normalize college acronyms & abbreviations & campus zones
+  text = text
+    .replace(/\bcafeteria\b/g, 'canteen')
+    .replace(/\bmess\b/g, 'canteen')
+    .replace(/\bcomp\s*sci\b/g, 'computer science')
+    .replace(/\bcs\b/g, 'computer science')
+    .replace(/\baudi\b/g, 'auditorium')
+    .replace(/\blib\b/g, 'library')
+    .replace(/\blaboratory\b/g, 'lab');
+
+  // Strip generic location filler words
+  text = text
+    .replace(/college|campus|near|around|the|at|floor|dept|department|area|spot|building/gi, '')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+
+  return text;
+}
+
 function normalizeLocStr(str: string): string {
   if (!str) return '';
   return str.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -295,11 +89,10 @@ function isCS2(normStr: string): boolean {
 
 /**
  * Calculates location match score adhering to college specifics:
- * - Exact same location: 25 points
- * - CS1 !== CS2
- * - Lab A !== Lab B
- * - Same general area but different specific location: 10 points
- * - Different location: 0 points
+ * - Exact same location / room: 25 points
+ * - CS1 vs CS2 or Lab A vs Lab B: 10 points (same department, distinct room)
+ * - Same general department / zone: 10 points
+ * - Distinct unrelated location: 0 points
  */
 export function calculateLocationScore(itemA: Item, itemB: Item): number {
   const areaA = (itemA.area || '').trim().toLowerCase();
@@ -325,13 +118,11 @@ export function calculateLocationScore(itemA: Item, itemB: Item): number {
 
   // 1. Conflict check: Lab A vs Lab B (both in CS, but different labs)
   if ((aLabA && bLabB) || (aLabB && bLabA)) {
-    // Same general department, different specific lab -> partial 10 points
     return 10;
   }
 
   // 2. Conflict check: CS1 vs CS2 (both in CS, but different classrooms)
   if ((aCS1 && bCS2) || (aCS2 && bCS1)) {
-    // Same general department, different classroom -> partial 10 points
     return 10;
   }
 
@@ -374,13 +165,19 @@ export function calculateLocationScore(itemA: Item, itemB: Item): number {
       return 25;
     }
     if (cleanA.includes(cleanB) || cleanB.includes(cleanA)) {
-      return 23;
+      return 25;
+    }
+    const zones = ['canteen', 'library', 'auditorium', 'gymkhana', 'parking', 'gate', 'office', 'ground'];
+    for (const z of zones) {
+      if (cleanA.includes(z) && cleanB.includes(z)) {
+        return 25;
+      }
     }
   }
 
-  // 10. Check if same general area (e.g. Computer Science Department)
+  // 10. Same general area
   if (areaA && areaB && areaA === areaB) {
-    return 10; // Same general area, different room
+    return 10;
   }
 
   // 11. Word-level fallback
@@ -400,73 +197,267 @@ export function calculateLocationScore(itemA: Item, itemB: Item): number {
 }
 
 /**
- * Normalizes campus location names and abbreviations
+ * Calculates date proximity score (Max 15 points)
  */
-function cleanLocation(str: string): string {
-  if (!str) return '';
-  
-  let text = str.toLowerCase();
+function calculateDateScore(itemA: Item, itemB: Item): { score: number; diffDays: number } {
+  try {
+    const timeA = new Date(itemA.date).getTime();
+    const timeB = new Date(itemB.date).getTime();
+    if (isNaN(timeA) || isNaN(timeB)) {
+      return { score: 8, diffDays: 0 };
+    }
+    const diffDays = Math.round(Math.abs(timeA - timeB) / (1000 * 60 * 60 * 24));
 
-  // Normalize college acronyms & abbreviations
-  text = text
-    .replace(/\bcomp\s*sci\b/g, 'computer science')
-    .replace(/\bcs\b/g, 'computer science')
-    .replace(/\baudi\b/g, 'auditorium')
-    .replace(/\blib\b/g, 'library')
-    .replace(/\blaboratory\b/g, 'lab');
-
-  // Strip generic location filler words
-  text = text
-    .replace(/college|campus|near|around|the|at|floor|dept|department|area|spot|building/gi, '')
-    .replace(/[^a-z0-9 ]/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
-
-  return text;
+    if (diffDays === 0) return { score: 15, diffDays: 0 };
+    if (diffDays <= 1) return { score: 14, diffDays };
+    if (diffDays <= 3) return { score: 12, diffDays };
+    if (diffDays <= 7) return { score: 8, diffDays };
+    if (diffDays <= 14) return { score: 4, diffDays };
+    return { score: 0, diffDays };
+  } catch {
+    return { score: 8, diffDays: 0 };
+  }
 }
 
 /**
- * Normalizes and extracts meaningful tokens with simple singularization
+ * Main Automated NLP-based Matching Algorithm for Ismail Yusuf College
+ *
+ * Transparent 100-Point Scoring Rubric:
+ * 1. NLP Semantic & Text Similarity: Max 25 points (Direct NLP semantic analysis of descriptions, titles, brands)
+ * 2. Category & Conceptual Compatibility: Max 25 points
+ * 3. Location Proximity & Specificity: Max 25 points
+ * 4. Date/Time Proximity: Max 15 points
+ * 5. Color Family & Visual Attributes: Max 10 points
+ * Total = 100 Points
+ *
+ * Classifications:
+ * - High confidence / Strong Match: >= 85 points
+ * - Possible match: 60–84 points (Threshold: 60%)
+ * - Low confidence / Low Match: < 60 points
  */
-function extractTokens(text: string): string[] {
-  if (!text) return [];
+export function calculateMatchScore(itemA: Item, itemB: Item): MatchScoreDetails {
+  const matchFactors: string[] = [];
 
-  const stopWords = new Set([
-    'a', 'an', 'the', 'in', 'on', 'at', 'with', 'by', 'for', 'of', 'and', 'or', 'is', 'it', 'was',
-    'has', 'had', 'lost', 'found', 'please', 'help', 'near', 'some', 'item', 'my', 'left', 'keep'
-  ]);
+  // Entity extraction via NLP engine
+  const entityA = extractEntities(itemA);
+  const entityB = extractEntities(itemB);
 
-  return Array.from(
-    new Set(
-      text
-        .toLowerCase()
-        .replace(/[^a-z0-9 ]/g, ' ')
-        .split(/\s+/)
-        .map(w => {
-          // Simple singularization
-          if (w.endsWith('s') && w.length > 3 && !w.endsWith('ss')) {
-            return w.slice(0, -1);
-          }
-          return w;
-        })
-        .filter(w => w.length > 2 && !stopWords.has(w))
-    )
-  );
+  // 1. NLP SEMANTIC TEXT SIMILARITY (Max 25 points)
+  const semanticResult = calculateTextSemanticSimilarity(itemA, itemB);
+  const nlpPercentage = semanticResult.score; // 0 to 100
+  // Scale 0-100% to 0-25 points
+  let keywordsScore = Math.round((nlpPercentage / 100) * 25);
+  keywordsScore = Math.min(25, Math.max(0, keywordsScore));
+
+  if (nlpPercentage >= 65) {
+    if (semanticResult.sharedConceptName) {
+      matchFactors.push(`Similar item description (${semanticResult.sharedConceptName})`);
+    } else {
+      matchFactors.push('Similar item description');
+    }
+  }
+  if (semanticResult.brandRelationship === 'match' && entityA.brand) {
+    matchFactors.push(`Same brand (${entityA.brand.toUpperCase()})`);
+  }
+
+  // 2. CATEGORY & CONCEPTUAL COMPATIBILITY (Max 25 points)
+  let categoryScore = 0;
+  const catA = (itemA.category || '').toLowerCase().trim();
+  const catB = (itemB.category || '').toLowerCase().trim();
+
+  // Concept conflict detection (e.g. Phone vs Mouse under general Electronics)
+  const hasConflictingConcepts = 
+    entityA.primaryConcept && 
+    entityB.primaryConcept && 
+    entityA.primaryConcept.id !== entityB.primaryConcept.id;
+
+  if (catA === catB) {
+    if (hasConflictingConcepts) {
+      // Incompatible item types under generic category (e.g. Laptop vs Earbuds under Electronics)
+      categoryScore = 5;
+    } else {
+      categoryScore = 25;
+      matchFactors.push(`Same category (${itemA.category})`);
+    }
+  } else {
+    // Check semantically related categories
+    const relatedGroups: string[][] = [
+      ['id cards', 'documents', 'wallet'],
+      ['books & stationery', 'documents'],
+      ['electronics', 'other'],
+      ['clothing', 'bags'],
+      ['wallet', 'bags']
+    ];
+
+    let isRelated = false;
+    for (const group of relatedGroups) {
+      if (group.includes(catA) && group.includes(catB)) {
+        isRelated = true;
+        break;
+      }
+    }
+
+    if (isRelated) {
+      if (entityA.primaryConcept && entityB.primaryConcept && entityA.primaryConcept.id === entityB.primaryConcept.id) {
+        categoryScore = 22;
+        matchFactors.push(`Compatible category (${itemA.category} ↔ ${itemB.category})`);
+      } else {
+        categoryScore = 15;
+      }
+    }
+  }
+
+  // 3. LOCATION MATCHING (Max 25 points)
+  const locationScore = calculateLocationScore(itemA, itemB);
+  if (locationScore >= 20) {
+    matchFactors.push(`Same location (${itemA.location})`);
+  } else if (locationScore >= 10) {
+    matchFactors.push(`Nearby location (${itemA.area || 'Same department'})`);
+  }
+
+  // 4. DATE PROXIMITY (Max 15 points)
+  const { score: dateScore, diffDays } = calculateDateScore(itemA, itemB);
+  if (dateScore >= 14) {
+    matchFactors.push(diffDays === 0 ? 'Reported on the same day' : 'Reported within 24 hours');
+  } else if (dateScore >= 10) {
+    matchFactors.push(`Reported within ${diffDays} days`);
+  }
+
+  // 5. COLOR MATCHING (Max 10 points)
+  let colorScore = 0;
+  const colA = (itemA.color || '').trim().toLowerCase();
+  const colB = (itemB.color || '').trim().toLowerCase();
+
+  if (colA && colB && colA !== 'other' && colB !== 'other') {
+    if (colA === colB || colA.includes(colB) || colB.includes(colA)) {
+      colorScore = 10;
+      matchFactors.push(`Same color (${itemA.color})`);
+    } else if (areColorsInSameFamily(colA, colB)) {
+      colorScore = 9;
+      matchFactors.push(`Matching color shade (${colA} ↔ ${colB})`);
+    } else if (
+      itemA.description.toLowerCase().includes(colB) ||
+      itemB.description.toLowerCase().includes(colA) ||
+      itemA.itemName.toLowerCase().includes(colB) ||
+      itemB.itemName.toLowerCase().includes(colA)
+    ) {
+      colorScore = 8;
+      matchFactors.push(`Color reference in report text`);
+    } else {
+      // Conflicting prominent colors (e.g. Red vs Green)
+      colorScore = 0;
+    }
+  } else {
+    // Unspecified / Other color receives neutral baseline
+    colorScore = 4;
+  }
+
+  // TOTAL SCORE COMPUTATION
+  let totalScore = Math.round(keywordsScore + categoryScore + locationScore + dateScore + colorScore);
+
+  // PRECISION SAFEGUARD:
+  // If concept clusters strongly conflict (e.g. Phone vs Mouse, or Laptop vs Umbrella),
+  // cap total score strictly below the 60% threshold to prevent false positives.
+  if (hasConflictingConcepts) {
+    totalScore = Math.min(totalScore, 45);
+  }
+
+  // Conflicting brands safeguard (e.g. Apple iPhone vs Samsung Galaxy)
+  if (semanticResult.brandRelationship === 'conflict') {
+    totalScore = Math.min(totalScore, 48);
+  }
+
+  totalScore = Math.min(100, Math.max(0, totalScore));
+
+  // CONFIDENCE LEVEL & STRENGTH
+  let confidenceLevel: MatchConfidenceLevel = 'Low confidence';
+  let matchStrength: MatchStrength = 'Low Match';
+
+  if (totalScore >= 85) {
+    confidenceLevel = 'High confidence';
+    matchStrength = 'Strong Match';
+  } else if (totalScore >= 60) {
+    confidenceLevel = 'Possible match';
+    matchStrength = 'Possible Match';
+  } else {
+    confidenceLevel = 'Low confidence';
+    matchStrength = 'Low Match';
+  }
+
+  const isPossibleMatch = totalScore >= 60;
+
+  return {
+    categoryScore,
+    locationScore,
+    dateScore,
+    colorScore,
+    keywordsScore,
+    nlpScore: nlpPercentage,
+    totalScore,
+    matchStrength,
+    confidenceLevel,
+    isPossibleMatch,
+    matchedItem: itemB,
+    matchFactors,
+    explanation: semanticResult.explanation
+  };
 }
 
 /**
- * Finds all matching candidates for an item from a list of items.
- * If candidate is LOST, we match against active FOUND items.
- * If candidate is FOUND, we match against active LOST items.
+ * Returns UI styling details for a given MatchStrength
+ */
+export function getMatchStrengthDetails(strength: MatchStrength) {
+  switch (strength) {
+    case 'High confidence':
+    case 'Very Strong Match':
+    case 'Strong Match':
+      return {
+        label: 'High Confidence',
+        badgeBg: 'bg-emerald-600 text-white',
+        cardBorder: 'border-emerald-400 ring-1 ring-emerald-400/30',
+        textClass: 'text-emerald-700 font-bold',
+        pillBg: 'bg-emerald-100 text-emerald-800'
+      };
+    case 'Possible match':
+    case 'Possible Match':
+      return {
+        label: 'Possible Match',
+        badgeBg: 'bg-blue-600 text-white',
+        cardBorder: 'border-blue-300',
+        textClass: 'text-blue-700 font-semibold',
+        pillBg: 'bg-blue-100 text-blue-800'
+      };
+    default:
+      return {
+        label: 'Low Confidence',
+        badgeBg: 'bg-slate-500 text-white',
+        cardBorder: 'border-slate-200',
+        textClass: 'text-slate-600',
+        pillBg: 'bg-slate-100 text-slate-700'
+      };
+  }
+}
+
+/**
+ * Finds all matching candidate pairings for an item from allItems.
+ * Enforces Requirements 13 & 14:
+ * - Excludes DELETED items
+ * - Excludes REJECTED items (verificationStatus === 'REJECTED')
+ * - Excludes RECOVERED items (status === 'RECOVERED')
+ * - Excludes CLOSED items (status === 'CLOSED')
+ * Only matches opposite report types (LOST with FOUND, FOUND with LOST).
  */
 export function findMatches(item: Item, allItems: Item[]): MatchScoreDetails[] {
-  // Ignore deleted items completely in matching
-  if (item.deleted) return [];
+  if (!isReportEligibleForMatching(item)) return [];
 
   const oppositeType = item.type === 'LOST' ? 'FOUND' : 'LOST';
 
   return allItems
-    .filter(other => !other.deleted && other.id !== item.id && other.type === oppositeType && other.status !== 'RECOVERED')
+    .filter(other => 
+      isReportEligibleForMatching(other) && 
+      other.id !== item.id && 
+      other.type === oppositeType
+    )
     .map(other => calculateMatchScore(item, other))
     .sort((a, b) => b.totalScore - a.totalScore);
 }

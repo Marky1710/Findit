@@ -157,6 +157,22 @@ const DEFAULT_FILTERS: BrowseFilters = {
   sortBy: 'newest'
 };
 
+// Safe JSON parser to ensure non-JSON or HTML fallbacks never crash state sync
+async function parseJsonSafely<T>(response: Response | null, fallback: T): Promise<T> {
+  if (!response || !response.ok) return fallback;
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    return fallback;
+  }
+  try {
+    const text = await response.text();
+    if (!text || !text.trim()) return fallback;
+    return JSON.parse(text) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Purge any stale client-side localStorage caches to guarantee backend single source of truth
   useEffect(() => {
@@ -239,26 +255,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ? `/api/items?adminId=${encodeURIComponent(currentUser.id)}&includeDeleted=true`
         : '/api/items';
 
+      const reqHeaders = { 'Accept': 'application/json' };
+
       const [itemsRes, usersRes, claimsRes, msgsRes, actsRes, modsRes, locsRes] = await Promise.all([
-        fetch(itemsUrl).catch(() => null),
-        fetch('/api/users').catch(() => null),
-        fetch('/api/claims').catch(() => null),
-        fetch('/api/messages').catch(() => null),
-        fetch('/api/activities').catch(() => null),
-        fetch('/api/moderation').catch(() => null),
-        fetch('/api/locations').catch(() => null)
+        fetch(itemsUrl, { headers: reqHeaders }).catch(() => null),
+        fetch('/api/users', { headers: reqHeaders }).catch(() => null),
+        fetch('/api/claims', { headers: reqHeaders }).catch(() => null),
+        fetch('/api/messages', { headers: reqHeaders }).catch(() => null),
+        fetch('/api/activities', { headers: reqHeaders }).catch(() => null),
+        fetch('/api/moderation', { headers: reqHeaders }).catch(() => null),
+        fetch('/api/locations', { headers: reqHeaders }).catch(() => null)
       ]);
 
-      if (itemsRes && itemsRes.ok) {
-        const data = await itemsRes.json();
-        if (Array.isArray(data)) {
-          setItems(data); // Authoritatively set even if empty array []
-        }
+      const [itemsData, usersData, claimsData, msgsData, actsData, modsData, locsData] = await Promise.all([
+        parseJsonSafely<Item[] | null>(itemsRes, null),
+        parseJsonSafely<User[] | { users: User[] } | null>(usersRes, null),
+        parseJsonSafely<Claim[] | null>(claimsRes, null),
+        parseJsonSafely<Message[] | null>(msgsRes, null),
+        parseJsonSafely<ActivityLog[] | null>(actsRes, null),
+        parseJsonSafely<ModerationReport[] | null>(modsRes, null),
+        parseJsonSafely<CampusLocation[] | null>(locsRes, null)
+      ]);
+
+      if (Array.isArray(itemsData)) {
+        setItems(itemsData); // Authoritatively set even if empty array []
       }
 
-      if (usersRes && usersRes.ok) {
-        const data = await usersRes.json();
-        const userList: User[] = Array.isArray(data) ? data : (data.users || []);
+      if (usersData) {
+        const userList: User[] = Array.isArray(usersData) ? usersData : (usersData.users || []);
         if (Array.isArray(userList)) {
           setAllUsers(userList);
           if (currentUser) {
@@ -274,42 +298,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
 
-      if (claimsRes && claimsRes.ok) {
-        const data = await claimsRes.json();
-        if (Array.isArray(data)) {
-          setClaims(data); // Authoritatively set even if empty array []
-        }
+      if (Array.isArray(claimsData)) {
+        setClaims(claimsData); // Authoritatively set even if empty array []
       }
 
-      if (msgsRes && msgsRes.ok) {
-        const data = await msgsRes.json();
-        if (Array.isArray(data)) {
-          setMessages(data); // Authoritatively set even if empty array []
-        }
+      if (Array.isArray(msgsData)) {
+        setMessages(msgsData); // Authoritatively set even if empty array []
       }
 
-      if (actsRes && actsRes.ok) {
-        const data = await actsRes.json();
-        if (Array.isArray(data)) {
-          setActivityLogs(data); // Authoritatively set even if empty array []
-        }
+      if (Array.isArray(actsData)) {
+        setActivityLogs(actsData); // Authoritatively set even if empty array []
       }
 
-      if (modsRes && modsRes.ok) {
-        const data = await modsRes.json();
-        if (Array.isArray(data)) {
-          setModerationReports(data); // Authoritatively set even if empty array []
-        }
+      if (Array.isArray(modsData)) {
+        setModerationReports(modsData); // Authoritatively set even if empty array []
       }
 
-      if (locsRes && locsRes.ok) {
-        const data = await locsRes.json();
-        if (Array.isArray(data) && data.length > 0) {
-          setLocations(data);
-        }
+      if (Array.isArray(locsData) && locsData.length > 0) {
+        setLocations(locsData);
       }
     } catch (err) {
-      console.error('Failed to sync authoritative database state', err);
+      console.warn('Authoritative database sync non-fatal error:', err);
     }
   }, [currentUser]);
 
@@ -317,8 +326,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     const savedUserId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
     if (savedUserId) {
-      fetch(`/api/auth/me?userId=${encodeURIComponent(savedUserId)}`)
-        .then(res => res.ok ? res.json() : null)
+      fetch(`/api/auth/me?userId=${encodeURIComponent(savedUserId)}`, {
+        headers: { 'Accept': 'application/json' }
+      })
+        .then(async res => {
+          if (!res.ok) return null;
+          const ct = res.headers.get('content-type') || '';
+          if (!ct.includes('application/json')) return null;
+          return res.json().catch(() => null);
+        })
         .then(data => {
           if (data && data.success && data.user) {
             setCurrentUser(data.user);
@@ -505,7 +521,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ adminId: currentUser.id })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({ success: false, error: 'Invalid server response' }));
       if (!res.ok || !data.success) {
         alert(data.error || 'Failed to soft delete report.');
         return false;
@@ -554,10 +570,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const res = await fetch(`/api/items/${itemId}/restore`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ adminId: currentUser.id })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({ success: false, error: 'Invalid server response' }));
       if (!res.ok || !data.success) {
         alert(data.error || 'Failed to restore report.');
         return false;
@@ -641,10 +657,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const res = await fetch(`/api/items/${itemId}/verify`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ adminId: currentUser.id })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({ success: false, error: 'Invalid server response' }));
       if (res.ok && data.success) {
         await refreshAllData();
       } else {
@@ -672,7 +688,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     fetch(`/api/items/${itemId}/reject`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({ reason: finalReason, verifiedBy: currentUser?.name })
     })
     .then(() => refreshAllData())
@@ -691,17 +707,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     fetch('/api/locations', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify({ area, name, description })
     })
-    .then(res => res.json())
-    .then(() => {
-      fetch('/api/locations')
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) setLocations(data);
-        });
-    })
+    .then(() => refreshAllData())
     .catch(err => console.error('Failed to sync location to backend:', err));
   };
 
@@ -712,16 +721,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     fetch(`/api/locations/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
       body: JSON.stringify(updates)
     })
-    .then(() => {
-      fetch('/api/locations')
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) setLocations(data);
-        });
-    })
+    .then(() => refreshAllData())
     .catch(err => console.error('Failed to sync location update to backend:', err));
   };
 
@@ -731,15 +734,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     fetch(`/api/locations/${id}/toggle`, {
-      method: 'POST'
+      method: 'POST',
+      headers: { 'Accept': 'application/json' }
     })
-    .then(() => {
-      fetch('/api/locations')
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) setLocations(data);
-        });
-    })
+    .then(() => refreshAllData())
     .catch(err => console.error('Failed to toggle location on backend:', err));
   };
 
@@ -777,10 +775,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const res = await fetch('/api/claims', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify(newClaim)
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({ success: false }));
       
       if (res.ok && data.success) {
         await refreshAllData();
@@ -804,7 +802,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const res = await fetch(`/api/claims/${claimId}/approve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({
           reviewerId: currentUser?.id,
           reviewerName: currentUser?.name || 'Staff',
@@ -812,7 +810,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           handoverLocation: finalHandoverLocation
         })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({ success: false }));
       if (res.ok && data.success) {
         await refreshAllData();
         return true;
@@ -833,14 +831,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const res = await fetch(`/api/claims/${claimId}/reject`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({
           reviewerId: currentUser?.id,
           reviewerName: currentUser?.name || 'Staff',
           resolutionNotes: finalReason
         })
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({ success: false }));
       if (res.ok && data.success) {
         await refreshAllData();
         return true;
@@ -882,13 +880,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newMsg)
     })
-    .then(() => {
-      fetch('/api/messages')
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) setMessages(data);
-        });
-    })
+    .then(() => refreshAllData())
     .catch(err => console.error('Failed to sync message to backend:', err));
   };
 

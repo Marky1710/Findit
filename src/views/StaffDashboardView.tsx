@@ -52,6 +52,7 @@ export const StaffDashboardView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [rejectModalItem, setRejectModalItem] = useState<Item | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
+  const [actionFeedback, setActionFeedback] = useState<string | null>(null);
 
   // Role Protection: Restricted to Staff & Admin
   if (!currentUser || (currentUser.role !== 'staff' && currentUser.role !== 'admin')) {

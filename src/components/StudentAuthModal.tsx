@@ -246,7 +246,7 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
 
       if (resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        const result = loginStudent(cleanId, loginPassword.trim(), data.user);
+        const result = loginStudent(cleanId, loginPassword.trim(), data.user, data.token);
         if (result.success) {
           resetAllForms();
           onClose();
@@ -309,10 +309,10 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
     try {
       const resp = await fetch('/api/auth/send-otp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ email: trimmedEmail })
       });
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({ success: false, error: 'Invalid response from server' }));
 
       if (!resp.ok || !data.success) {
         setStudentOtpError(data.error || 'Failed to send verification code.');
@@ -349,10 +349,10 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
     try {
       const resp = await fetch('/api/auth/verify-otp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ email: trimmedEmail, otp: cleanOtp })
       });
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({ success: false, error: 'Invalid response from server' }));
 
       if (!resp.ok || !data.success) {
         setStudentOtpError(data.error || 'Verification code is invalid or expired.');
@@ -393,10 +393,10 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
     try {
       const resp = await fetch('/api/auth/send-otp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ email: trimmedEmail })
       });
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({ success: false, error: 'Invalid response from server' }));
 
       if (!resp.ok || !data.success) {
         setStaffOtpError(data.error || 'Failed to send verification code.');
@@ -433,10 +433,10 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
     try {
       const resp = await fetch('/api/auth/verify-otp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ email: trimmedEmail, otp: cleanOtp })
       });
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({ success: false, error: 'Invalid response from server' }));
 
       if (!resp.ok || !data.success) {
         setStaffOtpError(data.error || 'Verification code is invalid or expired.');
@@ -495,11 +495,11 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
     try {
       const response = await fetch('/api/auth/register-student', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({ ...input, verificationToken: studentVerificationToken })
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({ success: false, error: 'Invalid response from server' }));
 
       if (!response.ok || !data.success) {
         setIsSubmittingStudent(false);
@@ -565,7 +565,7 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
 
       if (resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        const result = loginStaff(cleanEmail, staffPassword.trim(), data.user);
+        const result = loginStaff(cleanEmail, staffPassword.trim(), data.user, data.token);
         if (result.success) {
           resetAllForms();
           onClose();
@@ -636,10 +636,10 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
     try {
       const resp = await fetch('/api/auth/register-staff', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify(staffData)
       });
-      const data = await resp.json();
+      const data = await resp.json().catch(() => ({ success: false, error: 'Invalid response from server' }));
 
       if (!resp.ok || !data.success) {
         if (data.field) {
@@ -689,7 +689,7 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
 
       if (resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        const result = loginAdmin(clean, adminPassword.trim(), data.user);
+        const result = loginAdmin(clean, adminPassword.trim(), data.user, data.token);
         if (result.success) {
           resetAllForms();
           onClose();

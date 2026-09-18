@@ -95,24 +95,24 @@ export const MatchingScoreBadge: React.FC<Props> = ({
           
           <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
             <span>Algorithm 100-Point Criteria:</span>
-            <span className="text-slate-400 font-normal">Weights: Category(30) + Loc(25) + Date(20) + Color(15) + Keywords(10)</span>
+            <span className="text-slate-400 font-normal">Weights: Semantic NLP(25) + Category(25) + Location(25) + Date(15) + Color(10)</span>
           </div>
 
           {/* Point Checklist */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
             
-            {/* Category: 30 pts */}
+            {/* Category: 25 pts */}
             <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-100">
               <div className="flex items-center space-x-2">
                 <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] ${
-                  categoryScore >= 20 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
+                  categoryScore >= 18 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
                 }`}>
-                  {categoryScore >= 20 ? <Check className="w-3 h-3 stroke-[3]" /> : '–'}
+                  {categoryScore >= 18 ? <Check className="w-3 h-3 stroke-[3]" /> : '–'}
                 </span>
                 <span className="font-medium text-slate-700">Category Match</span>
               </div>
               <span className="font-mono font-bold text-slate-900">
-                +{categoryScore} / 30 pts
+                +{categoryScore} / 25 pts
               </span>
             </div>
 
@@ -131,52 +131,72 @@ export const MatchingScoreBadge: React.FC<Props> = ({
               </span>
             </div>
 
-            {/* Date: 20 pts */}
+            {/* Date: 15 pts */}
             <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-100">
               <div className="flex items-center space-x-2">
                 <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] ${
-                  dateScore >= 15 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
+                  dateScore >= 10 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
                 }`}>
-                  {dateScore >= 15 ? <Check className="w-3 h-3 stroke-[3]" /> : '–'}
+                  {dateScore >= 10 ? <Check className="w-3 h-3 stroke-[3]" /> : '–'}
                 </span>
                 <span className="font-medium text-slate-700">Date Window</span>
               </div>
               <span className="font-mono font-bold text-slate-900">
-                +{dateScore} / 20 pts
+                +{dateScore} / 15 pts
               </span>
             </div>
 
-            {/* Color: 15 pts */}
+            {/* Color: 10 pts */}
             <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-100">
               <div className="flex items-center space-x-2">
                 <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] ${
-                  colorScore >= 12 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
+                  colorScore >= 8 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
                 }`}>
-                  {colorScore >= 12 ? <Check className="w-3 h-3 stroke-[3]" /> : '–'}
+                  {colorScore >= 8 ? <Check className="w-3 h-3 stroke-[3]" /> : '–'}
                 </span>
                 <span className="font-medium text-slate-700">Color Match</span>
               </div>
               <span className="font-mono font-bold text-slate-900">
-                +{colorScore} / 15 pts
+                +{colorScore} / 10 pts
               </span>
             </div>
 
-            {/* Keywords: 10 pts */}
+            {/* Keywords / NLP: 25 pts */}
             <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-100 sm:col-span-2">
               <div className="flex items-center space-x-2">
                 <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] ${
-                  keywordsScore >= 4 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
+                  keywordsScore >= 15 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
                 }`}>
-                  {keywordsScore >= 4 ? <Check className="w-3 h-3 stroke-[3]" /> : '–'}
+                  {keywordsScore >= 15 ? <Check className="w-3 h-3 stroke-[3]" /> : '–'}
                 </span>
-                <span className="font-medium text-slate-700">Keywords &amp; Description NLP</span>
+                <span className="font-medium text-slate-700">Semantic NLP &amp; Description</span>
               </div>
               <span className="font-mono font-bold text-slate-900">
-                +{keywordsScore} / 10 pts
+                +{keywordsScore} / 25 pts
               </span>
             </div>
 
           </div>
+
+          {/* Key Match Factors */}
+          {matchDetails.matchFactors && matchDetails.matchFactors.length > 0 && (
+            <div className="space-y-1.5 pt-1">
+              <span className="text-[11px] font-bold text-slate-700">Key Match Factors:</span>
+              <div className="flex flex-wrap gap-1.5">
+                {matchDetails.matchFactors.map((factor, idx) => (
+                  <span key={idx} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    ✓ {factor}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {matchDetails.explanation && (
+            <p className="text-[11px] text-slate-500 italic">
+              {matchDetails.explanation}
+            </p>
+          )}
 
           {/* Disclaimer required by Section 2 */}
           <div className="flex items-start space-x-2 p-2.5 rounded-xl bg-amber-50/80 border border-amber-200 text-amber-900 text-[11px] leading-relaxed">
