@@ -240,7 +240,7 @@ export async function requestEmailOtp(email: string): Promise<{
     success: true,
     message: `A 4-digit verification code has been sent to ${cleanEmail}. It is valid for 5 minutes.`,
     previewUrl: emailResult.previewUrl,
-    devCode: process.env.NODE_ENV !== 'production' ? otpCode : undefined
+    devCode: (process.env.NODE_ENV !== 'production' || isEthereal || !process.env.SMTP_USER) ? otpCode : undefined
   };
 }
 

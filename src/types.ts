@@ -32,6 +32,10 @@ export interface User {
   isBlocked?: boolean;
   isRestricted?: boolean;
   isDeleted?: boolean;
+  deleted?: boolean;
+  deletedAt?: string;
+  deletedBy?: string;
+  status?: string;
 }
 
 export interface CampusLocation {

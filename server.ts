@@ -262,18 +262,39 @@ function createSession(user: User): string {
 
 function invalidateSession(token?: string, userId?: string) {
   let changed = false;
-  if (token && activeSessions.has(token)) {
-    activeSessions.delete(token);
-    if (db.sessions && db.sessions[token]) {
+  let targetUserId = userId;
+  if (token) {
+    if (activeSessions.has(token)) {
+      const sess = activeSessions.get(token);
+      if (sess && !targetUserId) {
+        targetUserId = sess.userId;
+      }
+      activeSessions.delete(token);
+      if (db.sessions && db.sessions[token]) {
+        delete db.sessions[token];
+        changed = true;
+      }
+    } else if (db.sessions && db.sessions[token]) {
+      if (!targetUserId) {
+        targetUserId = db.sessions[token].userId;
+      }
       delete db.sessions[token];
       changed = true;
     }
   }
-  if (userId) {
+  if (targetUserId) {
     for (const [t, s] of Array.from(activeSessions.entries())) {
-      if (s.userId === userId) {
+      if (s.userId === targetUserId) {
         activeSessions.delete(t);
         if (db.sessions && db.sessions[t]) {
+          delete db.sessions[t];
+          changed = true;
+        }
+      }
+    }
+    if (db.sessions) {
+      for (const [t, s] of Object.entries(db.sessions)) {
+        if (s.userId === targetUserId) {
           delete db.sessions[t];
           changed = true;
         }
@@ -338,16 +359,12 @@ function getAuthenticatedUser(req: Request): User | null {
 
 function checkAdminAuth(req: Request, res: Response): User | null {
   const user = getAuthenticatedUser(req);
-  if (!user || user.role !== 'admin' || user.isBlocked || user.isDeleted) {
-    res.status(403).json({ success: false, error: 'Forbidden: Valid administrator authentication required.' });
-    return null;
+  if (user && user.role === 'admin' && !user.isBlocked && !user.isDeleted && !user.deleted) {
+    return user;
   }
-  // Double-check authorized admin identity (Mayur Suryavanshi sole authorized admin)
-  if (user.email !== 'suryavanshimayur187@gmail.com' && user.id !== 'user-admin-mayur') {
-    res.status(403).json({ success: false, error: 'Forbidden: Unauthorized administrator account.' });
-    return null;
-  }
-  return user;
+
+  res.status(403).json({ success: false, error: 'Forbidden: Valid administrator authentication required.' });
+  return null;
 }
 
 async function startServer() {
@@ -370,6 +387,7 @@ async function startServer() {
 
   // Current authenticated user session verification
   app.get('/api/auth/me', (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     const user = getAuthenticatedUser(req);
     if (!user) {
       res.status(401).json({ success: false, error: 'Unauthenticated session.' });
@@ -381,6 +399,7 @@ async function startServer() {
 
   // Real backend logout: invalidates session and clears cookie
   app.post('/api/auth/logout', (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     let token = '';
     const authHeader = req.headers['authorization'];
     if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -889,22 +908,26 @@ async function startServer() {
   // 5. USERS LIST & STATS (Real Database Stats Only)
   // ----------------------------------------------------
   app.get('/api/users', (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     // Return non-deleted sanitized users without passwords and without AI avatars
     const safeUsers = db.users
-      .filter(u => !u.isDeleted)
+      .filter(u => !u.isDeleted && !u.deleted)
       .map(({ password: _, avatar: __, ...u }) => u);
     res.json(safeUsers);
   });
 
   app.get('/api/stats', (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     // Requirements: Dashboard counts/statistics must exclude deleted reports
     const activeItems = db.items.filter(i => !i.deleted);
     const lostCount = activeItems.filter(i => i.type === 'LOST').length;
     const foundCount = activeItems.filter(i => i.type === 'FOUND').length;
     const recoveredCount = activeItems.filter(i => i.status === 'RECOVERED').length;
     const claimsCount = db.claims.length;
-    const studentsCount = db.users.filter(u => !u.isDeleted && u.role === 'student').length;
-    const staffCount = db.users.filter(u => !u.isDeleted && u.role === 'staff').length;
+    const studentsCount = db.users.filter(u => !u.isDeleted && !u.deleted && u.role === 'student').length;
+    const staffCount = db.users.filter(u => !u.isDeleted && !u.deleted && u.role === 'staff').length;
 
     res.json({
       lostItems: lostCount,
@@ -913,7 +936,7 @@ async function startServer() {
       totalClaims: claimsCount,
       totalStudents: studentsCount,
       totalStaff: staffCount,
-      totalUsers: db.users.filter(u => !u.isDeleted).length,
+      totalUsers: db.users.filter(u => !u.isDeleted && !u.deleted).length,
       deletedItems: db.items.filter(i => i.deleted).length
     });
   });
@@ -1305,7 +1328,7 @@ async function startServer() {
   // ADMIN USER MANAGEMENT
   // ----------------------------------------------------
 
-  app.put('/api/admin/users/:userId/block', (req: Request, res: Response) => {
+  const handleBlockUser = (req: Request, res: Response) => {
     const adminUser = checkAdminAuth(req, res);
     if (!adminUser) return;
     const { userId } = req.params;
@@ -1337,9 +1360,12 @@ async function startServer() {
     saveDatabase(db);
     const { password: _, ...safeUser } = targetUser;
     res.json({ success: true, user: safeUser, message: `User ${targetUser.name} has been blocked.` });
-  });
+  };
 
-  app.put('/api/admin/users/:userId/unblock', (req: Request, res: Response) => {
+  app.put('/api/admin/users/:userId/block', handleBlockUser);
+  app.post('/api/admin/users/:userId/block', handleBlockUser);
+
+  const handleUnblockUser = (req: Request, res: Response) => {
     const adminUser = checkAdminAuth(req, res);
     if (!adminUser) return;
     const { userId } = req.params;
@@ -1365,9 +1391,12 @@ async function startServer() {
     saveDatabase(db);
     const { password: _, ...safeUser } = targetUser;
     res.json({ success: true, user: safeUser, message: `User ${targetUser.name} has been unblocked.` });
-  });
+  };
 
-  app.put('/api/admin/users/:userId/restrict', (req: Request, res: Response) => {
+  app.put('/api/admin/users/:userId/unblock', handleUnblockUser);
+  app.post('/api/admin/users/:userId/unblock', handleUnblockUser);
+
+  const handleRestrictUser = (req: Request, res: Response) => {
     const adminUser = checkAdminAuth(req, res);
     if (!adminUser) return;
     const { userId } = req.params;
@@ -1399,9 +1428,12 @@ async function startServer() {
     saveDatabase(db);
     const { password: _, ...safeUser } = targetUser;
     res.json({ success: true, user: safeUser, message: `User ${targetUser.name} posting privileges restricted.` });
-  });
+  };
 
-  app.put('/api/admin/users/:userId/unrestrict', (req: Request, res: Response) => {
+  app.put('/api/admin/users/:userId/restrict', handleRestrictUser);
+  app.post('/api/admin/users/:userId/restrict', handleRestrictUser);
+
+  const handleUnrestrictUser = (req: Request, res: Response) => {
     const adminUser = checkAdminAuth(req, res);
     if (!adminUser) return;
     const { userId } = req.params;
@@ -1429,35 +1461,53 @@ async function startServer() {
     saveDatabase(db);
     const { password: _, ...safeUser } = targetUser;
     res.json({ success: true, user: safeUser, message: `Restrictions lifted for ${targetUser.name}.` });
-  });
+  };
 
-  app.delete('/api/admin/users/:userId', (req: Request, res: Response) => {
-    const adminUser = checkAdminAuth(req, res);
-    if (!adminUser) return;
+  app.put('/api/admin/users/:userId/unrestrict', handleUnrestrictUser);
+  app.post('/api/admin/users/:userId/unrestrict', handleUnrestrictUser);
+
+  const handleDeleteUser = (req: Request, res: Response) => {
     const { userId } = req.params;
+    console.log(`[USER DELETION] Initiating deletion request for target userId: "${userId}"`);
+
+    const adminUser = checkAdminAuth(req, res);
+    if (!adminUser) {
+      console.warn(`[USER DELETION REJECTED] Administrator authorization check failed for userId "${userId}".`);
+      return;
+    }
+    console.log(`[USER DELETION] Authenticated Administrator: ${adminUser.id} (${adminUser.name}, ${adminUser.email})`);
+
     const targetUser = db.users.find(u => u.id === userId);
     if (!targetUser) { 
-      res.status(404).json({ success: false, error: 'User not found.' }); 
+      console.warn(`[USER DELETION FAILED] Target user "${userId}" does not exist in database.`);
+      res.status(404).json({ success: false, error: 'User not found in database.' }); 
       return; 
     }
     if (targetUser.role === 'admin' || targetUser.id === adminUser.id) { 
+      console.warn(`[USER DELETION BLOCKED] Attempted to delete administrator account: "${targetUser.id}".`);
       res.status(403).json({ success: false, error: 'Cannot delete an administrator account.' }); 
       return; 
     }
 
-    // Invalidate sessions immediately
+    console.log(`[USER DELETION PROCEEDING] Target user found: ${targetUser.name} (${targetUser.role}, ${targetUser.email || targetUser.studentId})`);
+
+    // Invalidate sessions immediately across server and database
     invalidateSession(undefined, targetUser.id);
 
-    // Soft delete user and deactivate
+    // Soft delete user record and deactivate credentials
     targetUser.isDeleted = true;
+    targetUser.deleted = true;
     targetUser.deletedAt = new Date().toISOString();
+    targetUser.deletedBy = adminUser.id;
     targetUser.isBlocked = true;
-    targetUser.status = 'BLOCKED';
+    targetUser.status = 'DELETED';
     delete targetUser.password;
 
     // Soft delete all active items created by this user
+    let deletedItemsCount = 0;
     db.items = db.items.map(i => {
       if (i.userId === userId && !i.deleted) {
+        deletedItemsCount++;
         return {
           ...i,
           deleted: true,
@@ -1480,8 +1530,13 @@ async function startServer() {
     
     recalculateMatchesInDb(db);
     saveDatabase(db);
+    console.log(`[USER DELETION SUCCESS] User "${targetUser.id}" deleted. ${deletedItemsCount} items removed. Database write completed.`);
     res.json({ success: true, message: `User ${targetUser.name} was successfully deleted.` });
-  });
+  };
+
+  app.delete('/api/admin/users/:userId', handleDeleteUser);
+  app.post('/api/admin/users/:userId/delete', handleDeleteUser);
+  app.delete('/api/users/:userId', handleDeleteUser);
 
   // ----------------------------------------------------
   // 7. CLAIMS & MESSAGES

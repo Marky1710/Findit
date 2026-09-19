@@ -213,6 +213,13 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
   const [showAdminPassword, setShowAdminPassword] = useState(false);
   const [adminError, setAdminError] = useState('');
 
+  // Automatically reset all form states whenever modal is closed
+  useEffect(() => {
+    if (!isOpen) {
+      resetAllForms();
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   // Expected Student ID prefix helper

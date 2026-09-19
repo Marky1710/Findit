@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { Item, User, Message, ModerationReport, Category, ItemType, ItemStatus, Claim, ActivityLog, CampusLocation } from '../types';
 import { INITIAL_ITEMS, INITIAL_USERS, INITIAL_MESSAGES, INITIAL_MODERATION, INITIAL_CLAIMS, INITIAL_ACTIVITIES, INITIAL_LOCATIONS } from '../data/initialData';
 import { validateStudentRegistration, StudentRegistrationInput, COLLEGE_COURSES, STUDY_YEARS } from '../utils/studentValidation';
@@ -31,6 +31,7 @@ export type AuthTab = 'student-login' | 'student-register' | 'staff-login' | 'ad
 
 interface AppContextType {
   currentUser: User | null;
+  isLoggingOut: boolean;
   allUsers: User[];
   items: Item[];
   locations: CampusLocation[];
@@ -118,14 +119,14 @@ interface AppContextType {
   markMessageRead: (messageId: string) => void;
   
   // Auth Operations
-  loginStudent: (studentId: string, password?: string, authenticatedUser?: User) => { success: boolean; error?: string };
-  loginStaff: (identifier: string, password?: string, authenticatedUser?: User) => { success: boolean; error?: string };
-  loginAdmin: (identifier: string, password?: string, authenticatedUser?: User) => { success: boolean; error?: string };
+  loginStudent: (studentId: string, password?: string, authenticatedUser?: User, sessionToken?: string) => { success: boolean; error?: string };
+  loginStaff: (identifier: string, password?: string, authenticatedUser?: User, sessionToken?: string) => { success: boolean; error?: string };
+  loginAdmin: (identifier: string, password?: string, authenticatedUser?: User, sessionToken?: string) => { success: boolean; error?: string };
   loginWithStudentId: (studentId: string) => boolean;
   registerStudent: (studentData: StudentRegistrationInput, createdUser?: User) => { success: boolean; error?: string; errors?: Record<string, string> };
   registerStaff: (staffData: { name: string; email: string; department: string; staffId?: string; password?: string; confirmPassword?: string }, createdUser?: User) => { success: boolean; error?: string };
   registerUser: (userData: { name: string; email: string; studentId: string; phone?: string; department?: string }) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   
   // Admin Operations
   flagItem: (itemId: string, reason: string) => void;
@@ -134,15 +135,16 @@ interface AppContextType {
   unblockUser: (userId: string) => Promise<boolean>;
   restrictUser: (userId: string) => Promise<boolean>;
   unrestrictUser: (userId: string) => Promise<boolean>;
-  deleteUser: (userId: string) => Promise<boolean>;
+  deleteUser: (userId: string) => Promise<{ success: boolean; error?: string }>;
   resetToDefaultData: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Persistent session key only — backend database is the single source of truth for all entities
+// Persistent session keys — backend database is the single source of truth for all entities
 const STORAGE_KEYS = {
-  CURRENT_USER_ID: 'iyc_current_user_v4'
+  CURRENT_USER_ID: 'iyc_current_user_v4',
+  SESSION_TOKEN: 'iyc_session_token_v4'
 };
 
 const DEFAULT_FILTERS: BrowseFilters = {
@@ -196,7 +198,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [items, setItems] = useState<Item[]>([]);
   const [locations, setLocations] = useState<CampusLocation[]>(INITIAL_LOCATIONS);
   const [allUsers, setAllUsers] = useState<User[]>(INITIAL_USERS);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, _setCurrentUser] = useState<User | null>(null);
+  const currentUserRef = useRef<User | null>(null);
+  const setCurrentUser = useCallback((user: User | null | ((prev: User | null) => User | null)) => {
+    _setCurrentUser(prev => {
+      const next = typeof user === 'function' ? user(prev) : user;
+      currentUserRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const isLoggingOutRef = useRef(false);
+  const authEpochRef = useRef(0);
+  const authAbortControllerRef = useRef<AbortController | null>(null);
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [claims, setClaims] = useState<Claim[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
@@ -236,6 +252,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Persist only user session token/ID to localStorage for seamless authentication
   useEffect(() => {
+    if (isLoggingOutRef.current) return;
     try {
       if (currentUser) {
         localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, currentUser.id);
@@ -248,23 +265,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [currentUser]);
 
   // Authoritative Backend Data Fetcher: Centralized Single Source of Truth
-  const refreshAllData = useCallback(async () => {
+  const refreshAllData = useCallback(async (options?: { forceLoggedOut?: boolean }) => {
     try {
-      const isAdmin = currentUser?.role === 'admin';
-      const itemsUrl = isAdmin && currentUser
-        ? `/api/items?adminId=${encodeURIComponent(currentUser.id)}&includeDeleted=true`
+      const activeUser = (options?.forceLoggedOut || isLoggingOutRef.current) ? null : currentUserRef.current;
+      const isAdmin = activeUser?.role === 'admin';
+      const itemsUrl = isAdmin && activeUser
+        ? `/api/items?adminId=${encodeURIComponent(activeUser.id)}&includeDeleted=true`
         : '/api/items';
 
       const reqHeaders = { 'Accept': 'application/json' };
 
       const [itemsRes, usersRes, claimsRes, msgsRes, actsRes, modsRes, locsRes] = await Promise.all([
-        fetch(itemsUrl, { headers: reqHeaders }).catch(() => null),
-        fetch('/api/users', { headers: reqHeaders }).catch(() => null),
-        fetch('/api/claims', { headers: reqHeaders }).catch(() => null),
-        fetch('/api/messages', { headers: reqHeaders }).catch(() => null),
-        fetch('/api/activities', { headers: reqHeaders }).catch(() => null),
-        fetch('/api/moderation', { headers: reqHeaders }).catch(() => null),
-        fetch('/api/locations', { headers: reqHeaders }).catch(() => null)
+        fetch(itemsUrl, { headers: reqHeaders, credentials: 'include' }).catch(() => null),
+        fetch(`/api/users?_t=${Date.now()}`, { headers: reqHeaders, credentials: 'include' }).catch(() => null),
+        fetch(`/api/claims?_t=${Date.now()}`, { headers: reqHeaders, credentials: 'include' }).catch(() => null),
+        fetch('/api/messages', { headers: reqHeaders, credentials: 'include' }).catch(() => null),
+        fetch('/api/activities', { headers: reqHeaders, credentials: 'include' }).catch(() => null),
+        fetch('/api/moderation', { headers: reqHeaders, credentials: 'include' }).catch(() => null),
+        fetch('/api/locations', { headers: reqHeaders, credentials: 'include' }).catch(() => null)
       ]);
 
       const [itemsData, usersData, claimsData, msgsData, actsData, modsData, locsData] = await Promise.all([
@@ -285,13 +303,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const userList: User[] = Array.isArray(usersData) ? usersData : (usersData.users || []);
         if (Array.isArray(userList)) {
           setAllUsers(userList);
-          if (currentUser) {
-            const updatedCurrentUser = userList.find(u => u.id === currentUser.id);
-            if (!updatedCurrentUser || updatedCurrentUser.isDeleted) {
+          // Only sync active profile if not in a logged out transition and active session is intact
+          if (!isLoggingOutRef.current && !options?.forceLoggedOut && currentUserRef.current) {
+            const activeId = currentUserRef.current.id;
+            const updatedCurrentUser = userList.find(u => u.id === activeId);
+            if (!updatedCurrentUser || updatedCurrentUser.isDeleted || updatedCurrentUser.isBlocked) {
+              currentUserRef.current = null;
               setCurrentUser(null);
               localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+              localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
               setCurrentPage('home');
             } else {
+              currentUserRef.current = updatedCurrentUser;
               setCurrentUser(updatedCurrentUser);
             }
           }
@@ -320,43 +343,93 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (err) {
       console.warn('Authoritative database sync non-fatal error:', err);
     }
-  }, [currentUser]);
+  }, [setCurrentUser]);
 
   // Restore authenticated session on initial mount & fetch initial backend state
   useEffect(() => {
-    const savedUserId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
-    if (savedUserId) {
-      fetch(`/api/auth/me?userId=${encodeURIComponent(savedUserId)}`, {
-        headers: { 'Accept': 'application/json' }
-      })
-        .then(async res => {
-          if (!res.ok) return null;
-          const ct = res.headers.get('content-type') || '';
-          if (!ct.includes('application/json')) return null;
-          return res.json().catch(() => null);
-        })
-        .then(data => {
-          if (data && data.success && data.user) {
-            setCurrentUser(data.user);
-          } else if (data && data.success === false) {
-            localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
-            setCurrentUser(null);
+    let isMounted = true;
+    const initializeAuthAndData = async () => {
+      const thisEpoch = ++authEpochRef.current;
+      if (authAbortControllerRef.current) {
+        authAbortControllerRef.current.abort();
+      }
+      const abortController = new AbortController();
+      authAbortControllerRef.current = abortController;
+
+      const savedUserId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
+      const savedToken = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN);
+
+      if (savedUserId || savedToken) {
+        try {
+          const headers: Record<string, string> = { 
+            'Accept': 'application/json',
+            'Cache-Control': 'no-cache'
+          };
+          if (savedToken) {
+            headers['Authorization'] = `Bearer ${savedToken}`;
+            headers['x-session-token'] = savedToken;
           }
-        })
-        .catch(() => {});
-    }
+          if (savedUserId) {
+            headers['x-user-id'] = savedUserId;
+          }
 
-    refreshAllData();
-  }, [refreshAllData]);
+          const res = await fetch(`/api/auth/me${savedUserId ? `?userId=${encodeURIComponent(savedUserId)}` : ''}`, {
+            headers,
+            credentials: 'include',
+            signal: abortController.signal
+          });
 
-  // Re-fetch data when authentication context changes
+          if (!isMounted || thisEpoch !== authEpochRef.current || isLoggingOutRef.current) {
+            return;
+          }
+
+          if (!res.ok) {
+            localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+            localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+            currentUserRef.current = null;
+            setCurrentUser(null);
+          } else {
+            const data = await res.json().catch(() => null);
+            if (!isMounted || thisEpoch !== authEpochRef.current || isLoggingOutRef.current) {
+              return;
+            }
+            if (data && data.success && data.user && !data.user.isDeleted && !data.user.isBlocked) {
+              currentUserRef.current = data.user;
+              setCurrentUser(data.user);
+            } else {
+              localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+              localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+              currentUserRef.current = null;
+              setCurrentUser(null);
+            }
+          }
+        } catch (err: any) {
+          if (err?.name !== 'AbortError') {
+            console.warn('Initial session restore network warning:', err);
+          }
+        }
+      }
+
+      if (isMounted && !isLoggingOutRef.current) {
+        await refreshAllData();
+      }
+    };
+
+    initializeAuthAndData();
+
+    return () => {
+      isMounted = false;
+      if (authAbortControllerRef.current) {
+        authAbortControllerRef.current.abort();
+      }
+    };
+  }, [refreshAllData, setCurrentUser]);
+
+  // Re-fetch data when manually requested
   const refreshItems = useCallback(async () => {
+    if (isLoggingOutRef.current) return;
     await refreshAllData();
   }, [refreshAllData]);
-
-  useEffect(() => {
-    refreshItems();
-  }, [refreshItems]);
 
   // Actions
   const selectItem = (itemId: string) => {
@@ -510,20 +583,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteItem = async (itemId: string): Promise<boolean> => {
-    if (!currentUser || currentUser.role !== 'admin') {
-      alert('Security Notice: Only authenticated Campus Administrators can delete reports.');
+    if (!currentUser) {
+      alert('Security Notice: Please sign in to manage reports.');
+      return false;
+    }
+
+    const itemToDelete = items.find(i => i.id === itemId);
+    const isOwner = itemToDelete && (
+      itemToDelete.userId === currentUser.id ||
+      (Boolean(currentUser.email) && itemToDelete.userEmail === currentUser.email) ||
+      (Boolean(currentUser.studentId) && itemToDelete.userId === currentUser.studentId)
+    );
+    const isAdmin = currentUser.role === 'admin';
+    const isStaff = currentUser.role === 'staff';
+
+    if (!isOwner && !isAdmin && !isStaff) {
+      alert('Security Notice: You can only delete reports that you submitted.');
       return false;
     }
 
     try {
+      const sessionToken = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
       const res = await fetch(`/api/items/${itemId}/delete`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ adminId: currentUser.id })
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': sessionToken ? `Bearer ${sessionToken}` : '',
+          'x-user-id': currentUser.id,
+          'x-admin-id': isAdmin ? currentUser.id : ''
+        },
+        body: JSON.stringify({ 
+          userId: currentUser.id,
+          adminId: isAdmin ? currentUser.id : undefined 
+        })
       });
       const data = await res.json().catch(() => ({ success: false, error: 'Invalid server response' }));
       if (!res.ok || !data.success) {
-        alert(data.error || 'Failed to soft delete report.');
+        alert(data.error || 'Failed to delete report.');
         return false;
       }
 
@@ -537,14 +633,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (selectedItemId === itemId && currentPage === 'item-details') {
         setSelectedItemId(null);
-        setCurrentPage(currentUser.role === 'admin' ? 'admin' : 'browse');
+        setCurrentPage(isAdmin ? 'admin' : (isStaff ? 'staff-dashboard' : 'dashboard'));
       }
 
       const newActivity: ActivityLog = {
         id: `act-${Date.now()}`,
         userId: currentUser.id,
-        title: `Report Soft-Deleted`,
-        description: `Admin ${currentUser.name} soft-deleted report "${data.item?.itemName || itemId}".`,
+        title: isAdmin ? 'Report Soft-Deleted' : 'Report Deleted',
+        description: `${currentUser.name} (${currentUser.role}) deleted report "${data.item?.itemName || itemToDelete?.itemName || itemId}".`,
         timestamp: deletedAt,
         type: 'MODERATION'
       };
@@ -649,16 +745,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const verifyItem = async (itemId: string, verifierName?: string) => {
-    if (!currentUser || currentUser.role !== 'admin') {
-      alert('Security Notice: Only Campus Administrators can verify reports.');
+    if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'staff')) {
+      alert('Security Notice: Only authorized Staff and Campus Administrators can verify reports.');
       return;
     }
     
     try {
+      const sessionToken = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
       const res = await fetch(`/api/items/${itemId}/verify`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ adminId: currentUser.id })
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Accept': 'application/json',
+          'Authorization': sessionToken ? `Bearer ${sessionToken}` : '',
+          'x-user-id': currentUser.id,
+          'x-admin-id': currentUser.id
+        },
+        body: JSON.stringify({ 
+          adminId: currentUser.id,
+          userId: currentUser.id,
+          verifierName: verifierName || currentUser.name
+        })
       });
       const data = await res.json().catch(() => ({ success: false, error: 'Invalid server response' }));
       if (res.ok && data.success) {
@@ -895,7 +1002,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Student Login (Student ID + Password)
-  const loginStudent = (studentId: string, password?: string, authenticatedUser?: User): { success: boolean; error?: string } => {
+  const loginStudent = (studentId: string, password?: string, authenticatedUser?: User, sessionToken?: string): { success: boolean; error?: string } => {
     if (authenticatedUser) {
       setCurrentUser(authenticatedUser);
       setAllUsers(prev => {
@@ -909,6 +1016,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       try {
         localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, authenticatedUser.id);
+        if (sessionToken) {
+          localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, sessionToken);
+        }
       } catch {}
       if (pendingPostAuthAction) {
         pendingPostAuthAction();
@@ -935,6 +1045,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentUser(user);
     try {
       localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, user.id);
+      if (sessionToken) {
+        localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, sessionToken);
+      }
     } catch {}
     if (pendingPostAuthAction) {
       pendingPostAuthAction();
@@ -944,7 +1057,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Staff / Faculty Login (Email + Password)
-  const loginStaff = (identifier: string, password?: string, authenticatedUser?: User): { success: boolean; error?: string } => {
+  const loginStaff = (identifier: string, password?: string, authenticatedUser?: User, sessionToken?: string): { success: boolean; error?: string } => {
     if (authenticatedUser) {
       setCurrentUser(authenticatedUser);
       setAllUsers(prev => {
@@ -958,6 +1071,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       try {
         localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, authenticatedUser.id);
+        if (sessionToken) {
+          localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, sessionToken);
+        }
       } catch {}
       if (pendingPostAuthAction) {
         pendingPostAuthAction();
@@ -990,6 +1106,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentUser(staffUser);
     try {
       localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, staffUser.id);
+      if (sessionToken) {
+        localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, sessionToken);
+      }
     } catch {}
     if (pendingPostAuthAction) {
       pendingPostAuthAction();
@@ -999,7 +1118,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Admin Login (Authorized Admin Mayur Suryavanshi ONLY)
-  const loginAdmin = (identifier: string, password?: string, authenticatedUser?: User): { success: boolean; error?: string } => {
+  const loginAdmin = (identifier: string, password?: string, authenticatedUser?: User, sessionToken?: string): { success: boolean; error?: string } => {
     if (authenticatedUser) {
       setCurrentUser(authenticatedUser);
       setAllUsers(prev => {
@@ -1013,6 +1132,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       try {
         localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, authenticatedUser.id);
+        if (sessionToken) {
+          localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, sessionToken);
+        }
       } catch {}
       if (pendingPostAuthAction) {
         pendingPostAuthAction();
@@ -1042,6 +1164,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentUser(adminUser);
     try {
       localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, adminUser.id);
+      if (sessionToken) {
+        localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, sessionToken);
+      }
     } catch {}
     if (pendingPostAuthAction) {
       pendingPostAuthAction();
@@ -1195,10 +1320,78 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAllUsers(prev => [...prev, newUser]);
   };
 
-  const logout = () => {
+  const logout = async () => {
+    // 1. Prevent duplicate logout clicks
+    if (isLoggingOutRef.current) {
+      return;
+    }
+    isLoggingOutRef.current = true;
+    setIsLoggingOut(true);
+
+    // 2. Invalidate any in-flight auth requests immediately
+    authEpochRef.current += 1;
+    if (authAbortControllerRef.current) {
+      authAbortControllerRef.current.abort();
+      authAbortControllerRef.current = null;
+    }
+
+    // 3. Immediately close any open auth modal & reset auth modal action
+    setAuthModalOpen(false);
+    setPendingPostAuthAction(null);
+
+    // 4. Retrieve credentials for backend invalidation before clearing storage
+    const token = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN);
+    const userId = currentUserRef.current?.id || localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
+
+    // 5. Call backend /api/auth/logout to invalidate session on the server
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : '',
+          'x-session-token': token || '',
+          'x-user-id': userId || ''
+        },
+        body: JSON.stringify({ token, userId })
+      });
+    } catch (err) {
+      console.warn('Backend logout request warning:', err);
+    }
+
+    // 6. Clear local storage tokens and caches
+    try {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+      localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+      sessionStorage.clear();
+    } catch {}
+
+    // 7. Atomically clear current authenticated user and authenticated role
+    currentUserRef.current = null;
     setCurrentUser(null);
-    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+
+    // 8. Clear all user-specific active item / modal states
+    setSelectedItemId(null);
+    setActiveContactItem(null);
+    setActiveClaimItem(null);
+    setActiveReviewClaim(null);
+    setActiveEditItem(null);
+
+    // 9. Navigate to public Home
     setCurrentPage('home');
+
+    // 10. Refresh public data with forced logged-out flag
+    try {
+      await refreshAllData({ forceLoggedOut: true });
+    } catch (err) {
+      console.warn('Post-logout public data refresh non-fatal error:', err);
+    }
+
+    // 11. Complete logout transition cleanly without any page reload
+    isLoggingOutRef.current = false;
+    setIsLoggingOut(false);
   };
 
   const flagItem = (itemId: string, reason: string) => {
@@ -1240,9 +1433,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const blockUser = async (userId: string): Promise<boolean> => {
     try {
+      const token = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
+      const adminId = currentUser?.id || '';
       const res = await fetch(`/api/admin/users/${userId}/block`, { 
-        method: 'PUT',
-        headers: { 'x-admin-id': currentUser?.id || '' }
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : '',
+          'x-session-token': token,
+          'x-admin-id': adminId,
+          'x-user-id': adminId
+        }
       });
       if (res.ok) {
         await refreshAllData();
@@ -1254,9 +1455,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const unblockUser = async (userId: string): Promise<boolean> => {
     try {
+      const token = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
+      const adminId = currentUser?.id || '';
       const res = await fetch(`/api/admin/users/${userId}/unblock`, { 
-        method: 'PUT',
-        headers: { 'x-admin-id': currentUser?.id || '' }
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : '',
+          'x-session-token': token,
+          'x-admin-id': adminId,
+          'x-user-id': adminId
+        }
       });
       if (res.ok) {
         await refreshAllData();
@@ -1268,9 +1477,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const restrictUser = async (userId: string): Promise<boolean> => {
     try {
+      const token = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
+      const adminId = currentUser?.id || '';
       const res = await fetch(`/api/admin/users/${userId}/restrict`, { 
-        method: 'PUT',
-        headers: { 'x-admin-id': currentUser?.id || '' }
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : '',
+          'x-session-token': token,
+          'x-admin-id': adminId,
+          'x-user-id': adminId
+        }
       });
       if (res.ok) {
         await refreshAllData();
@@ -1282,9 +1499,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const unrestrictUser = async (userId: string): Promise<boolean> => {
     try {
+      const token = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
+      const adminId = currentUser?.id || '';
       const res = await fetch(`/api/admin/users/${userId}/unrestrict`, { 
-        method: 'PUT',
-        headers: { 'x-admin-id': currentUser?.id || '' }
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': token ? `Bearer ${token}` : '',
+          'x-session-token': token,
+          'x-admin-id': adminId,
+          'x-user-id': adminId
+        }
       });
       if (res.ok) {
         await refreshAllData();
@@ -1294,18 +1519,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch { return false; }
   };
 
-  const deleteUser = async (userId: string): Promise<boolean> => {
+  const deleteUser = async (userId: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      const res = await fetch(`/api/admin/users/${userId}`, { 
-        method: 'DELETE',
-        headers: { 'x-admin-id': currentUser?.id || '' }
-      });
-      if (res.ok) {
-        await refreshAllData();
-        return true;
+      const token = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
+      const adminId = currentUser?.id || '';
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+        headers['x-session-token'] = token;
       }
-      return false;
-    } catch { return false; }
+      if (adminId) {
+        headers['x-user-id'] = adminId;
+      }
+
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, { 
+        method: 'DELETE',
+        credentials: 'include',
+        headers
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
+        await refreshAllData();
+        return { success: true };
+      }
+      return { success: false, error: data?.error || `Server error (${res.status})` };
+    } catch (err: any) { 
+      return { success: false, error: err?.message || 'Network error while attempting to delete user.' };
+    }
   };
 
   const resetToDefaultData = () => {
@@ -1335,6 +1578,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     <AppContext.Provider
       value={{
         currentUser,
+        isLoggingOut,
         allUsers,
         items,
         locations,

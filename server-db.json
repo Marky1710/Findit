@@ -22,8 +22,14 @@
       "role": "student",
       "email": "test.student@gmail.com",
       "emailVerified": true,
-      "password": "password123",
-      "createdAt": "2026-09-17"
+      "createdAt": "2026-09-17",
+      "isRestricted": false,
+      "status": "DELETED",
+      "isBlocked": true,
+      "isDeleted": true,
+      "deleted": true,
+      "deletedAt": "2026-09-19T10:39:23.979Z",
+      "deletedBy": "user-admin-mayur"
     },
     {
       "id": "user-student-1789637467016",
@@ -35,8 +41,14 @@
       "role": "student",
       "email": "rohan.sharma.test@gmail.com",
       "emailVerified": true,
-      "password": "StudentSecret@123",
-      "createdAt": "2026-09-17"
+      "createdAt": "2026-09-17",
+      "isBlocked": true,
+      "status": "DELETED",
+      "isRestricted": false,
+      "isDeleted": true,
+      "deleted": true,
+      "deletedAt": "2026-09-19T10:39:52.500Z",
+      "deletedBy": "user-admin-mayur"
     },
     {
       "id": "user-student-1789637713746",
@@ -62,7 +74,10 @@
       "email": "markyy183@gmail.com",
       "emailVerified": true,
       "password": "$2b$10$eTZ.srI6pRebeZs1KJNkWuP5/5gNObwol9PmK8dYwoUK9rNkeLKvy",
-      "createdAt": "2026-09-17"
+      "createdAt": "2026-09-17",
+      "isBlocked": false,
+      "status": "ACTIVE",
+      "isRestricted": false
     },
     {
       "id": "user-staff-1789638952185",
@@ -73,7 +88,7 @@
       "studentId": "NOT ASSIGNED",
       "designation": "Faculty / Staff Member",
       "role": "staff",
-      "password": "741852",
+      "password": "$2b$10$H7VxEsP1KQ/KoO0olqFTIOPQl7bLZwodQkvWcDyO6q4pWPNxXrpHq",
       "createdAt": "2026-09-17"
     },
     {
@@ -86,8 +101,79 @@
       "role": "student",
       "email": "rkchpglm@guerrillamailblock.com",
       "emailVerified": true,
-      "password": "741852",
+      "password": "$2b$10$5yBSmeMiEWgugq7OovW.E.OHhDbqDUaY9.Zs/gCvC8Qvx9OtpjwzG",
       "createdAt": "2026-09-17"
+    },
+    {
+      "id": "user-stu-test-1789799343336",
+      "name": "Aakash Verma",
+      "email": "aakash.test@gmail.com",
+      "emailVerified": true,
+      "studentId": "STU-BSC-099",
+      "course": "B.Sc. Computer Science",
+      "year": "TY",
+      "role": "student",
+      "createdAt": "2026-09-19",
+      "isDeleted": true,
+      "deleted": true,
+      "deletedAt": "2026-09-19T10:41:18.987Z",
+      "deletedBy": "user-admin-mayur",
+      "isBlocked": true,
+      "status": "DELETED"
+    },
+    {
+      "id": "user-student-1789799398258",
+      "name": "Rohit Ramesh Sharma",
+      "studentId": "26FCS45",
+      "course": "B.Sc. Computer Science",
+      "department": "Computer Science",
+      "year": "First Year",
+      "role": "student",
+      "email": "rohit.sharma.1789799395631@gmail.com",
+      "emailVerified": true,
+      "phone": "+91 98765 43299",
+      "createdAt": "2026-09-19",
+      "isDeleted": true,
+      "deletedAt": "2026-09-19T06:29:58.378Z",
+      "deletedBy": "user-admin-mayur",
+      "isBlocked": true,
+      "status": "DELETED"
+    },
+    {
+      "id": "user-student-1789814169127",
+      "name": "Rohan Sharma",
+      "studentId": "26TCS37",
+      "course": "B.Sc. Computer Science",
+      "department": "Computer Science",
+      "year": "Third Year",
+      "role": "student",
+      "email": "test.student.1789814167097@gmail.com",
+      "emailVerified": true,
+      "createdAt": "2026-09-19",
+      "isDeleted": true,
+      "deleted": true,
+      "deletedAt": "2026-09-19T10:40:28.373Z",
+      "deletedBy": "user-admin-mayur",
+      "isBlocked": true,
+      "status": "DELETED"
+    },
+    {
+      "id": "user-student-1789814197219",
+      "name": "Rohan Sharma",
+      "studentId": "26TCS16",
+      "course": "B.Sc. Computer Science",
+      "department": "Computer Science",
+      "year": "Third Year",
+      "role": "student",
+      "email": "test.student.1789814194826@gmail.com",
+      "emailVerified": true,
+      "createdAt": "2026-09-19",
+      "isDeleted": true,
+      "deleted": true,
+      "deletedAt": "2026-09-19T10:36:37.350Z",
+      "deletedBy": "user-admin-mayur",
+      "isBlocked": true,
+      "status": "DELETED"
     }
   ],
   "items": [
@@ -228,6 +314,294 @@
     }
   ],
   "activities": [
+    {
+      "id": "act-1789814567701",
+      "userId": "user-admin-mayur",
+      "title": "User Account Restrictions Lifted",
+      "description": "Administrator Mayur Suryavanshi restored full privileges for user sharukh khan.",
+      "timestamp": "2026-09-19T10:42:47.701Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814540838",
+      "userId": "user-admin-mayur",
+      "title": "User Account Unblocked",
+      "description": "Administrator Mayur Suryavanshi unblocked user sharukh khan (markyy183@gmail.com).",
+      "timestamp": "2026-09-19T10:42:20.838Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814535464",
+      "userId": "user-admin-mayur",
+      "title": "User Account Privileges Restricted",
+      "description": "Administrator Mayur Suryavanshi restricted posting privileges for user sharukh khan.",
+      "timestamp": "2026-09-19T10:42:15.464Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814535455",
+      "userId": "user-admin-mayur",
+      "title": "User Account Privileges Restricted",
+      "description": "Administrator Mayur Suryavanshi restricted posting privileges for user sharukh khan.",
+      "timestamp": "2026-09-19T10:42:15.455Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814535285",
+      "userId": "user-admin-mayur",
+      "title": "User Account Privileges Restricted",
+      "description": "Administrator Mayur Suryavanshi restricted posting privileges for user sharukh khan.",
+      "timestamp": "2026-09-19T10:42:15.285Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814535239",
+      "userId": "user-admin-mayur",
+      "title": "User Account Privileges Restricted",
+      "description": "Administrator Mayur Suryavanshi restricted posting privileges for user sharukh khan.",
+      "timestamp": "2026-09-19T10:42:15.239Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814535107",
+      "userId": "user-admin-mayur",
+      "title": "User Account Privileges Restricted",
+      "description": "Administrator Mayur Suryavanshi restricted posting privileges for user sharukh khan.",
+      "timestamp": "2026-09-19T10:42:15.107Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814534380",
+      "userId": "user-admin-mayur",
+      "title": "User Account Privileges Restricted",
+      "description": "Administrator Mayur Suryavanshi restricted posting privileges for user sharukh khan.",
+      "timestamp": "2026-09-19T10:42:14.380Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814534365",
+      "userId": "user-admin-mayur",
+      "title": "User Account Privileges Restricted",
+      "description": "Administrator Mayur Suryavanshi restricted posting privileges for user sharukh khan.",
+      "timestamp": "2026-09-19T10:42:14.365Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814533836",
+      "userId": "user-admin-mayur",
+      "title": "User Account Privileges Restricted",
+      "description": "Administrator Mayur Suryavanshi restricted posting privileges for user sharukh khan.",
+      "timestamp": "2026-09-19T10:42:13.836Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814533834",
+      "userId": "user-admin-mayur",
+      "title": "User Account Privileges Restricted",
+      "description": "Administrator Mayur Suryavanshi restricted posting privileges for user sharukh khan.",
+      "timestamp": "2026-09-19T10:42:13.834Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814522042",
+      "userId": "user-admin-mayur",
+      "title": "User Account Blocked",
+      "description": "Administrator Mayur Suryavanshi blocked user sharukh khan (markyy183@gmail.com).",
+      "timestamp": "2026-09-19T10:42:02.042Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814522025",
+      "userId": "user-admin-mayur",
+      "title": "User Account Blocked",
+      "description": "Administrator Mayur Suryavanshi blocked user sharukh khan (markyy183@gmail.com).",
+      "timestamp": "2026-09-19T10:42:02.025Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814513359",
+      "userId": "user-admin-mayur",
+      "title": "User Account Blocked",
+      "description": "Administrator Mayur Suryavanshi blocked user sharukh khan (markyy183@gmail.com).",
+      "timestamp": "2026-09-19T10:41:53.359Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814478987",
+      "userId": "user-admin-mayur",
+      "title": "User Account Deleted",
+      "description": "Administrator Mayur Suryavanshi deleted user Aakash Verma (aakash.test@gmail.com).",
+      "timestamp": "2026-09-19T10:41:18.987Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814428373",
+      "userId": "user-admin-mayur",
+      "title": "User Account Deleted",
+      "description": "Administrator Mayur Suryavanshi deleted user Rohan Sharma (test.student.1789814167097@gmail.com).",
+      "timestamp": "2026-09-19T10:40:28.373Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814392500",
+      "userId": "user-admin-mayur",
+      "title": "User Account Deleted",
+      "description": "Administrator Mayur Suryavanshi deleted user Rohan Sharma (rohan.sharma.test@gmail.com).",
+      "timestamp": "2026-09-19T10:39:52.500Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814363979",
+      "userId": "user-admin-mayur",
+      "title": "User Account Deleted",
+      "description": "Administrator Mayur Suryavanshi deleted user Aakash Deshmukh (test.student@gmail.com).",
+      "timestamp": "2026-09-19T10:39:23.979Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789814197350",
+      "userId": "user-admin-mayur",
+      "title": "User Account Deleted",
+      "description": "Administrator Mayur Suryavanshi deleted user Rohan Sharma (test.student.1789814194826@gmail.com).",
+      "timestamp": "2026-09-19T10:36:37.350Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789812864014",
+      "userId": "user-admin-mayur",
+      "title": "User Account Restrictions Lifted",
+      "description": "Administrator Mayur Suryavanshi restored full privileges for user Rohan Sharma.",
+      "timestamp": "2026-09-19T10:14:24.014Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789812861399",
+      "userId": "user-admin-mayur",
+      "title": "User Account Privileges Restricted",
+      "description": "Administrator Mayur Suryavanshi restricted posting privileges for user Rohan Sharma.",
+      "timestamp": "2026-09-19T10:14:21.399Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789812859562",
+      "userId": "user-admin-mayur",
+      "title": "User Account Unblocked",
+      "description": "Administrator Mayur Suryavanshi unblocked user Rohan Sharma (rohan.sharma.test@gmail.com).",
+      "timestamp": "2026-09-19T10:14:19.562Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789812855680",
+      "userId": "user-admin-mayur",
+      "title": "User Account Blocked",
+      "description": "Administrator Mayur Suryavanshi blocked user Rohan Sharma (rohan.sharma.test@gmail.com).",
+      "timestamp": "2026-09-19T10:14:15.680Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789812521491",
+      "userId": "user-admin-mayur",
+      "title": "User Account Unblocked",
+      "description": "Administrator Mayur Suryavanshi unblocked user sharukh khan (markyy183@gmail.com).",
+      "timestamp": "2026-09-19T10:08:41.491Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789812518486",
+      "userId": "user-admin-mayur",
+      "title": "User Account Blocked",
+      "description": "Administrator Mayur Suryavanshi blocked user sharukh khan (markyy183@gmail.com).",
+      "timestamp": "2026-09-19T10:08:38.486Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789812518484",
+      "userId": "user-admin-mayur",
+      "title": "User Account Blocked",
+      "description": "Administrator Mayur Suryavanshi blocked user sharukh khan (markyy183@gmail.com).",
+      "timestamp": "2026-09-19T10:08:38.484Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789812509550",
+      "userId": "user-admin-mayur",
+      "title": "User Account Unblocked",
+      "description": "Administrator Mayur Suryavanshi unblocked user Aakash Deshmukh (test.student@gmail.com).",
+      "timestamp": "2026-09-19T10:08:29.550Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789812507229",
+      "userId": "user-admin-mayur",
+      "title": "User Account Unblocked",
+      "description": "Administrator Mayur Suryavanshi unblocked user Aakash Deshmukh (test.student@gmail.com).",
+      "timestamp": "2026-09-19T10:08:27.229Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789812503592",
+      "userId": "user-admin-mayur",
+      "title": "User Account Blocked",
+      "description": "Administrator Mayur Suryavanshi blocked user Aakash Deshmukh (test.student@gmail.com).",
+      "timestamp": "2026-09-19T10:08:23.592Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789799398378",
+      "userId": "user-admin-mayur",
+      "title": "User Account Deleted",
+      "description": "Administrator Mayur Suryavanshi deleted user Rohit Ramesh Sharma (rohit.sharma.1789799395631@gmail.com).",
+      "timestamp": "2026-09-19T06:29:58.378Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789798949796",
+      "userId": "user-admin-mayur",
+      "title": "User Account Restrictions Lifted",
+      "description": "Administrator Mayur Suryavanshi restored full privileges for user Aakash Deshmukh.",
+      "timestamp": "2026-09-19T06:22:29.796Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789798947386",
+      "userId": "user-admin-mayur",
+      "title": "User Account Privileges Restricted",
+      "description": "Administrator Mayur Suryavanshi restricted posting privileges for user Aakash Deshmukh.",
+      "timestamp": "2026-09-19T06:22:27.386Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789798939430",
+      "userId": "user-admin-mayur",
+      "title": "User Account Restrictions Lifted",
+      "description": "Administrator Mayur Suryavanshi restored full privileges for user Rohan Sharma.",
+      "timestamp": "2026-09-19T06:22:19.430Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789798935646",
+      "userId": "user-admin-mayur",
+      "title": "User Account Privileges Restricted",
+      "description": "Administrator Mayur Suryavanshi restricted posting privileges for user Rohan Sharma.",
+      "timestamp": "2026-09-19T06:22:15.646Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789798934320",
+      "userId": "user-admin-mayur",
+      "title": "User Account Unblocked",
+      "description": "Administrator Mayur Suryavanshi unblocked user Rohan Sharma (rohan.sharma.test@gmail.com).",
+      "timestamp": "2026-09-19T06:22:14.320Z",
+      "type": "MODERATION"
+    },
+    {
+      "id": "act-1789798931838",
+      "userId": "user-admin-mayur",
+      "title": "User Account Blocked",
+      "description": "Administrator Mayur Suryavanshi blocked user Rohan Sharma (rohan.sharma.test@gmail.com).",
+      "timestamp": "2026-09-19T06:22:11.838Z",
+      "type": "MODERATION"
+    },
     {
       "id": "act-1789726522542",
       "userId": "user-student-1789638394701",
@@ -395,5 +769,15 @@
       "description": "Physics & Chemistry Practical Labs"
     }
   ],
-  "matches": []
+  "matches": [],
+  "sessions": {
+    "iyc_sess_eiz6tw405jlmu8a0goctbvugx5engf": {
+      "token": "iyc_sess_eiz6tw405jlmu8a0goctbvugx5engf",
+      "userId": "user-student-1789637713746",
+      "role": "student",
+      "email": "ladytsunade.h106@gmail.com",
+      "createdAt": 1789815627372,
+      "expiresAt": 1790420427372
+    }
+  }
 }

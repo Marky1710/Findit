@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { StudentAuthModal } from './StudentAuthModal';
 import { UserAvatar } from './UserAvatar';
@@ -28,11 +28,20 @@ export const Navbar: React.FC = () => {
     authModalTab,
     openAuthModal,
     closeAuthModal,
-    logout 
+    logout,
+    isLoggingOut
   } = useApp();
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+
+  // Automatically close all user popovers immediately when logged out or logging out
+  useEffect(() => {
+    if (!currentUser || isLoggingOut) {
+      setUserMenuOpen(false);
+      setMobileMenuOpen(false);
+    }
+  }, [currentUser, isLoggingOut]);
 
   return (
     <>
@@ -179,7 +188,7 @@ export const Navbar: React.FC = () => {
 
             {/* Right Side: Auth controls */}
             <div className="flex items-center space-x-2">
-              {!currentUser ? (
+              {(!currentUser || isLoggingOut) ? (
                 <div className="flex items-center space-x-2">
                   <button
                     id="nav-signin-btn"
@@ -311,14 +320,15 @@ export const Navbar: React.FC = () => {
                       <div className="border-t border-slate-100 pt-1 px-2">
                         <button
                           id="nav-logout-btn"
-                          onClick={() => {
-                            logout();
+                          disabled={isLoggingOut}
+                          onClick={async () => {
                             setUserMenuOpen(false);
+                            await logout();
                           }}
-                          className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 flex items-center space-x-2 transition-colors"
+                          className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-red-600 hover:bg-red-50 flex items-center space-x-2 transition-colors disabled:opacity-50"
                         >
                           <LogOut className="w-4 h-4 text-red-500" />
-                          <span>Log Out</span>
+                          <span>{isLoggingOut ? 'Logging out...' : 'Log Out'}</span>
                         </button>
                       </div>
                     </div>
@@ -395,10 +405,15 @@ export const Navbar: React.FC = () => {
                 )}
                 <div className="pt-2 border-t border-slate-100">
                   <button
-                    onClick={() => { logout(); setMobileMenuOpen(false); }}
-                    className="w-full text-left px-3 py-2.5 rounded-lg text-sm font-bold text-red-600 hover:bg-red-50"
+                    id="mobile-nav-logout-btn"
+                    disabled={isLoggingOut}
+                    onClick={async () => {
+                      setMobileMenuOpen(false);
+                      await logout();
+                    }}
+                    className="w-full text-left px-3 py-2.5 rounded-lg text-sm font-bold text-red-600 hover:bg-red-50 disabled:opacity-50"
                   >
-                    Log Out ({currentUser.name})
+                    {isLoggingOut ? 'Logging out...' : `Log Out (${currentUser.name})`}
                   </button>
                 </div>
               </>

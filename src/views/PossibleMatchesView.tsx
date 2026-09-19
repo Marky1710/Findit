@@ -26,7 +26,7 @@ export const PossibleMatchesView: React.FC = () => {
     openContactModal, 
     openClaimModal, 
     setCurrentPage,
-    refreshData
+    refreshItems
   } = useApp();
 
   const [scope, setScope] = useState<'MY_ITEMS' | 'ALL_ITEMS'>('ALL_ITEMS');
@@ -41,8 +41,8 @@ export const PossibleMatchesView: React.FC = () => {
     try {
       const res = await fetch('/api/matches');
       if (res.ok) {
-        if (refreshData) {
-          await refreshData();
+        if (refreshItems) {
+          await refreshItems();
         }
         setRecalculateMessage('Matches refreshed from persistent database.');
       }

@@ -10,6 +10,7 @@ import { ItemDetailsView } from './views/ItemDetailsView';
 import { DashboardView } from './views/DashboardView';
 import { StaffDashboardView } from './views/StaffDashboardView';
 import { AdminDashboardView } from './views/AdminDashboardView';
+import { PossibleMatchesView } from './views/PossibleMatchesView';
 import { ContactModal } from './components/ContactModal';
 import { EditItemModal } from './components/EditItemModal';
 import { ClaimModal } from './components/ClaimModal';
@@ -36,6 +37,7 @@ const AppContent: React.FC = () => {
       <main className="flex-1">
         {currentPage === 'home' && <HomeView />}
         {currentPage === 'browse' && <BrowseView />}
+        {currentPage === 'matches' && <PossibleMatchesView />}
         {currentPage === 'report-lost' && <ReportLostView />}
         {currentPage === 'report-found' && <ReportFoundView />}
         {currentPage === 'item-details' && <ItemDetailsView />}
