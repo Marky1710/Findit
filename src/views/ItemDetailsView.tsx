@@ -182,33 +182,35 @@ export const ItemDetailsView: React.FC = () => {
             </button>
           )}
 
-          {/* Admin Direct Action: Soft Delete / Restore */}
-          {currentUser?.role === 'admin' && (
+          {/* Admin & Owner Direct Action: Delete / Restore */}
+          {(currentUser?.role === 'admin' || (currentUser && (currentUser.id === item.userId || (Boolean(currentUser.email) && currentUser.email === item.userEmail) || (Boolean(currentUser.studentId) && currentUser.studentId === item.userId)))) && (
             item.deleted ? (
-              <button
-                onClick={async () => {
-                  if (window.confirm(`Restore report "${item.itemName}" back to active listings?`)) {
-                    await restoreItem(item.id);
-                  }
-                }}
-                className="inline-flex items-center space-x-1.5 text-xs font-bold text-emerald-700 hover:text-white hover:bg-emerald-600 bg-emerald-50 border border-emerald-300 px-3 py-2 rounded-xl transition-all shadow-xs"
-                title="Restore this report to active public view"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Restore Report</span>
-              </button>
+              currentUser.role === 'admin' && (
+                <button
+                  onClick={async () => {
+                    if (window.confirm(`Restore report "${item.itemName}" back to active listings?`)) {
+                      await restoreItem(item.id);
+                    }
+                  }}
+                  className="inline-flex items-center space-x-1.5 text-xs font-bold text-emerald-700 hover:text-white hover:bg-emerald-600 bg-emerald-50 border border-emerald-300 px-3 py-2 rounded-xl transition-all shadow-xs"
+                  title="Restore this report to active public view"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Restore Report</span>
+                </button>
+              )
             ) : (
               <button
                 onClick={async () => {
                   if (window.confirm("Are you sure you want to delete this report?")) {
                     const ok = await deleteItem(item.id);
                     if (ok) {
-                      setCurrentPage('admin');
+                      setCurrentPage(currentUser?.role === 'admin' ? 'admin' : (currentUser?.role === 'staff' ? 'staff-dashboard' : 'dashboard'));
                     }
                   }
                 }}
                 className="inline-flex items-center space-x-1.5 text-xs font-bold text-rose-600 hover:text-white hover:bg-rose-600 bg-rose-50 border border-rose-200 px-3 py-2 rounded-xl transition-all shadow-xs"
-                title="Soft delete this report"
+                title="Delete this report"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Delete Report</span>

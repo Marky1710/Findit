@@ -88,8 +88,13 @@
       "studentId": "NOT ASSIGNED",
       "designation": "Faculty / Staff Member",
       "role": "staff",
-      "password": "$2b$10$H7VxEsP1KQ/KoO0olqFTIOPQl7bLZwodQkvWcDyO6q4pWPNxXrpHq",
-      "createdAt": "2026-09-17"
+      "createdAt": "2026-09-17",
+      "isDeleted": true,
+      "deleted": true,
+      "deletedAt": "2026-09-20T15:50:05.911Z",
+      "deletedBy": "user-admin-mayur",
+      "isBlocked": true,
+      "status": "DELETED"
     },
     {
       "id": "user-student-1789639205440",
@@ -314,6 +319,14 @@
     }
   ],
   "activities": [
+    {
+      "id": "act-1789919405911",
+      "userId": "user-admin-mayur",
+      "title": "User Account Deleted",
+      "description": "Administrator Mayur Suryavanshi deleted user jonny liver (hkyiuqcz@guerrillamailblock.com).",
+      "timestamp": "2026-09-20T15:50:05.911Z",
+      "type": "MODERATION"
+    },
     {
       "id": "act-1789814567701",
       "userId": "user-admin-mayur",

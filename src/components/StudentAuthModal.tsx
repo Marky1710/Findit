@@ -330,6 +330,9 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
         setStudentOtpSent(true);
         setStudentOtpCooldown(60);
         setStudentOtpSuccess(data.message || '4-digit OTP sent to your email.');
+        if (data.devCode) {
+          setStudentOtpCode(data.devCode);
+        }
         if (data.previewUrl) {
           setStudentPreviewUrl(data.previewUrl);
         }
@@ -414,6 +417,9 @@ export const StudentAuthModal: React.FC<StudentAuthModalProps> = ({
         setStaffOtpSent(true);
         setStaffOtpCooldown(60);
         setStaffOtpSuccess(data.message || '4-digit OTP sent to your email.');
+        if (data.devCode) {
+          setStaffOtpCode(data.devCode);
+        }
         if (data.previewUrl) {
           setStaffPreviewUrl(data.previewUrl);
         }

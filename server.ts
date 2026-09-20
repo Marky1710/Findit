@@ -5,8 +5,20 @@ import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import bcrypt from 'bcryptjs';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const getModuleDirname = (): string => {
+  if (typeof __dirname !== 'undefined') {
+    return __dirname;
+  }
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta && import.meta.url) {
+      return path.dirname(fileURLToPath(import.meta.url));
+    }
+  } catch {
+    // Fallback if import.meta.url is undefined
+  }
+  return process.cwd();
+};
+const currentDirname = getModuleDirname();
 import { 
   OFFICIAL_IYC_COURSES, 
   STUDY_YEARS, 
@@ -28,7 +40,7 @@ import {
   testSmtpConnection
 } from './src/server/emailService';
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Resolve persistent database file path with robust fallback checks
 function getDatabaseFilePath(): string {
@@ -37,8 +49,8 @@ function getDatabaseFilePath(): string {
   const candidates = [
     path.join(process.cwd(), 'server-db.json'),
     path.join(process.cwd(), 'dist', 'server-db.json'),
-    path.join(__dirname, 'server-db.json'),
-    path.join(__dirname, '..', 'server-db.json')
+    path.join(currentDirname, 'server-db.json'),
+    path.join(currentDirname, '..', 'server-db.json')
   ];
 
   for (const p of candidates) {
@@ -1061,15 +1073,17 @@ async function startServer() {
     res.json({ success: true, item: db.items[index] });
   });
 
-  // Verify item listing by Admin
+  // Verify item listing by Admin or Staff
   app.post('/api/items/:id/verify', (req: Request, res: Response) => {
     const { id } = req.params;
-    const { adminId } = req.body;
+    const { adminId, userId, verifierName } = req.body;
+    const authUser = getAuthenticatedUser(req);
+    const identifier = adminId || userId || (req.headers['x-admin-id'] as string) || (req.headers['x-user-id'] as string);
 
-    // Authenticate Admin
-    const adminUser = db.users.find(u => u.id === adminId && u.role === 'admin');
-    if (!adminUser) {
-      res.status(403).json({ success: false, error: 'Unauthorized. Only Campus Administrators can verify reports.' });
+    // Authenticate Admin or Staff
+    const reviewer = authUser || db.users.find(u => (u.id === identifier || u.email === identifier) && (u.role === 'admin' || u.role === 'staff'));
+    if (!reviewer || (reviewer.role !== 'admin' && reviewer.role !== 'staff')) {
+      res.status(403).json({ success: false, error: 'Unauthorized. Only Staff or Campus Administrators can verify reports.' });
       return;
     }
 
@@ -1079,16 +1093,17 @@ async function startServer() {
       return;
     }
 
+    const displayName = verifierName || reviewer.name;
     item.isVerifiedByAdmin = true;
     item.verificationStatus = 'VERIFIED';
-    item.verifiedBy = adminUser.name;
+    item.verifiedBy = displayName;
     item.verifiedAt = new Date().toISOString();
 
     const log: ActivityLog = {
       id: `act-${Date.now()}`,
-      userId: adminUser.id,
+      userId: reviewer.id,
       title: 'Item Listing Verified',
-      description: `Listing "${item.itemName}" was verified by ${adminUser.name}.`,
+      description: `Listing "${item.itemName}" was verified by ${displayName} (${reviewer.role}).`,
       timestamp: new Date().toISOString(),
       type: 'STATUS'
     };
@@ -1102,12 +1117,14 @@ async function startServer() {
   // Reject item listing by staff/admin
   app.post('/api/items/:id/reject', (req: Request, res: Response) => {
     const { id } = req.params;
-    const { reason, adminId } = req.body;
+    const { reason, adminId, userId, verifiedBy } = req.body;
+    const authUser = getAuthenticatedUser(req);
+    const identifier = adminId || userId || (req.headers['x-admin-id'] as string) || (req.headers['x-user-id'] as string);
 
-    // Authenticate Admin
-    const adminUser = db.users.find(u => u.id === adminId && u.role === 'admin');
-    if (!adminUser) {
-      res.status(403).json({ success: false, error: 'Unauthorized. Only Campus Administrators can reject reports.' });
+    // Authenticate Admin or Staff
+    const reviewer = authUser || db.users.find(u => (u.id === identifier || u.email === identifier) && (u.role === 'admin' || u.role === 'staff'));
+    if (!reviewer || (reviewer.role !== 'admin' && reviewer.role !== 'staff')) {
+      res.status(403).json({ success: false, error: 'Unauthorized. Only Staff or Campus Administrators can reject reports.' });
       return;
     }
 
@@ -1117,17 +1134,18 @@ async function startServer() {
       return;
     }
 
+    const displayName = verifiedBy || reviewer.name;
     item.verificationStatus = 'REJECTED';
-    item.verifiedBy = adminUser.name;
+    item.verifiedBy = displayName;
     item.verifiedAt = new Date().toISOString();
-    const note = `Admin Note: ${reason || 'Details could not be verified'}`;
+    const note = `Review Note (${reviewer.role}): ${reason || 'Details could not be verified'}`;
     item.additionalInfo = item.additionalInfo ? `${item.additionalInfo} | ${note}` : note;
 
     const log: ActivityLog = {
       id: `act-${Date.now()}`,
-      userId: adminUser.id,
+      userId: reviewer.id,
       title: 'Item Listing Rejected',
-      description: `Listing "${item.itemName}" was rejected by ${adminUser.name}. Reason: ${reason || 'Unverified'}`,
+      description: `Listing "${item.itemName}" was rejected by ${displayName}. Reason: ${reason || 'Unverified'}`,
       timestamp: new Date().toISOString(),
       type: 'STATUS'
     };
@@ -1228,20 +1246,12 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // Handler for Admin Soft Delete
+  // Handler for Soft Delete (Owner, Staff, or Admin)
   const handleSoftDelete = (req: Request, res: Response) => {
     const { id } = req.params;
-    const adminId = req.body?.adminId || (req.query?.adminId as string) || (req.headers['x-admin-id'] as string) || (req.headers['x-user-id'] as string);
-
-    // SECURITY: Verify that the requester is an actual authenticated ADMIN in the database
-    const adminUser = db.users.find(u => (u.id === adminId || u.email === adminId) && u.role === 'admin');
-    if (!adminUser) {
-      res.status(403).json({ 
-        success: false, 
-        error: 'Unauthorized. Only certified Campus Administrators can delete reports.' 
-      });
-      return;
-    }
+    const requesterId = req.body?.userId || req.body?.adminId || (req.query?.userId as string) || (req.query?.adminId as string) || (req.headers['x-admin-id'] as string) || (req.headers['x-user-id'] as string);
+    const authUser = getAuthenticatedUser(req);
+    const user = authUser || db.users.find(u => u.id === requesterId || u.email === requesterId || (u.studentId && u.studentId === requesterId));
 
     const item = db.items.find(i => i.id === id);
     if (!item) {
@@ -1249,17 +1259,33 @@ async function startServer() {
       return;
     }
 
-    // SOFT DELETE: Flag as deleted, record timestamp and admin user ID
+    // Check authorization: Admin, Staff, or Owner of the item
+    const isAdmin = user && user.role === 'admin';
+    const isStaff = user && user.role === 'staff';
+    const isOwner = (user && (user.id === item.userId || user.email === item.userEmail || (user.studentId && user.studentId === item.userId))) ||
+                    (requesterId && (requesterId === item.userId || requesterId === item.userEmail));
+
+    if (!isAdmin && !isStaff && !isOwner) {
+      res.status(403).json({ 
+        success: false, 
+        error: 'Unauthorized. You can only delete reports that you submitted, or you must be an administrator or staff member.' 
+      });
+      return;
+    }
+
+    // SOFT DELETE: Flag as deleted, record timestamp and user ID
+    const deletedBy = user ? user.id : (requesterId || 'user');
+    const deleterName = user ? user.name : (isOwner ? item.userName : 'Authorized User');
     item.deleted = true;
     item.deletedAt = new Date().toISOString();
-    item.deletedBy = adminUser.id;
+    item.deletedBy = deletedBy;
 
     // Add activity log
     const log: ActivityLog = {
       id: `act-${Date.now()}`,
-      userId: adminUser.id,
-      title: `Report Soft-Deleted by Admin`,
-      description: `Admin ${adminUser.name} soft-deleted ${item.type} listing "${item.itemName}" (ID: ${item.id}).`,
+      userId: deletedBy,
+      title: isAdmin ? `Report Soft-Deleted by Admin` : (isStaff ? `Report Soft-Deleted by Staff` : `Report Deleted by Student`),
+      description: `${deleterName} deleted ${item.type} listing "${item.itemName}" (ID: ${item.id}).`,
       timestamp: new Date().toISOString(),
       type: 'MODERATION'
     };
@@ -1269,7 +1295,7 @@ async function startServer() {
     saveDatabase(db);
     res.json({ 
       success: true, 
-      message: `Report "${item.itemName}" successfully soft-deleted.`, 
+      message: `Report "${item.itemName}" successfully deleted.`, 
       item 
     });
   };
@@ -2029,7 +2055,11 @@ Return JSON only: { "similarityScore": number (0-100), "reason": string }`;
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'))
+      ? path.join(process.cwd(), 'dist')
+      : (fs.existsSync(path.join(currentDirname, 'index.html'))
+          ? currentDirname
+          : path.join(process.cwd(), 'dist'));
     app.use(express.static(distPath));
     app.get('*', (req: Request, res: Response) => {
       res.sendFile(path.join(distPath, 'index.html'));

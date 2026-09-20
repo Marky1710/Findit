@@ -45,7 +45,7 @@ export const ClaimReviewModal: React.FC<ClaimReviewModalProps> = ({ claim, onClo
 
   const targetItem = items.find(i => i.id === claim.itemId);
   const claimantUser = allUsers.find(u => u.id === claim.claimantId);
-  const isAuthorizedReviewer = Boolean(currentUser && (currentUser.role === 'admin' || currentUser.id === claim.ownerId));
+  const isAuthorizedReviewer = Boolean(currentUser && (currentUser.role === 'admin' || currentUser.role === 'staff' || currentUser.id === claim.ownerId));
 
   // Initialize handover location with item's current storage if empty
   const defaultLocation = targetItem?.currentStorageLocation || 'Campus Security Cabin (Main Gate)';
