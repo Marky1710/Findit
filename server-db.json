@@ -29,7 +29,8 @@
       "isDeleted": true,
       "deleted": true,
       "deletedAt": "2026-09-19T10:39:23.979Z",
-      "deletedBy": "user-admin-mayur"
+      "deletedBy": "user-admin-mayur",
+      "password": "student123"
     },
     {
       "id": "user-student-1789637467016",
@@ -60,7 +61,7 @@
       "role": "student",
       "email": "ladytsunade.h106@gmail.com",
       "emailVerified": true,
-      "password": "$2b$10$84ibtIsi1VcS/KiazLNa1.nbrzxDUHgidUep.pbKs0oxpipeS/Emy",
+      "password": "$2b$10$BxULewmvyxDcHK6EnUBgZOlBM4Tcc6najjKHQQHbrF4p.bBzCoFxe",
       "createdAt": "2026-09-17"
     },
     {

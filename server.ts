@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import bcrypt from 'bcryptjs';
@@ -256,7 +257,7 @@ if (db.sessions) {
 }
 
 function createSession(user: User): string {
-  const token = 'iyc_sess_' + Math.random().toString(36).substring(2) + Date.now().toString(36) + Math.random().toString(36).substring(2);
+  const token = 'iyc_sess_' + crypto.randomBytes(24).toString('hex') + '_' + Date.now().toString(36);
   const sessionData: SessionData = {
     token,
     userId: user.id,
@@ -274,40 +275,27 @@ function createSession(user: User): string {
 
 function invalidateSession(token?: string, userId?: string) {
   let changed = false;
-  let targetUserId = userId;
   if (token) {
     if (activeSessions.has(token)) {
-      const sess = activeSessions.get(token);
-      if (sess && !targetUserId) {
-        targetUserId = sess.userId;
-      }
       activeSessions.delete(token);
-      if (db.sessions && db.sessions[token]) {
-        delete db.sessions[token];
-        changed = true;
-      }
-    } else if (db.sessions && db.sessions[token]) {
-      if (!targetUserId) {
-        targetUserId = db.sessions[token].userId;
-      }
+      changed = true;
+    }
+    if (db.sessions && db.sessions[token]) {
       delete db.sessions[token];
       changed = true;
     }
   }
-  if (targetUserId) {
-    for (const [t, s] of Array.from(activeSessions.entries())) {
-      if (s.userId === targetUserId) {
-        activeSessions.delete(t);
-        if (db.sessions && db.sessions[t]) {
-          delete db.sessions[t];
-          changed = true;
-        }
+  if (userId) {
+    for (const [sToken, sData] of activeSessions.entries()) {
+      if (sData.userId === userId) {
+        activeSessions.delete(sToken);
+        changed = true;
       }
     }
     if (db.sessions) {
-      for (const [t, s] of Object.entries(db.sessions)) {
-        if (s.userId === targetUserId) {
-          delete db.sessions[t];
+      for (const [sToken, sData] of Object.entries(db.sessions)) {
+        if (sData.userId === userId) {
+          delete db.sessions[sToken];
           changed = true;
         }
       }
@@ -327,19 +315,15 @@ function getAuthenticatedUser(req: Request): User | null {
   if (!token) {
     token = (req.headers['x-session-token'] as string) || '';
   }
-  if (!token && req.headers.cookie) {
-    const match = req.headers.cookie.match(/findit_session=([^;]+)/);
-    if (match) token = match[1].trim();
-  }
   if (!token && req.query.token) {
     token = (req.query.token as string).trim();
   }
 
   if (token) {
-    if (!activeSessions.has(token)) {
+    const session = activeSessions.get(token);
+    if (!session) {
       return null;
     }
-    const session = activeSessions.get(token)!;
     if (Date.now() > session.expiresAt) {
       invalidateSession(token);
       return null;
@@ -350,20 +334,6 @@ function getAuthenticatedUser(req: Request): User | null {
       return null;
     }
     return user;
-  }
-
-  // Fallback for requests using user ID only if that user currently holds an active, unexpired session
-  const directId = (req.headers['x-user-id'] as string) || (req.query.userId as string);
-  if (directId) {
-    const hasActiveSession = Array.from(activeSessions.values()).some(
-      s => s.userId === directId && Date.now() <= s.expiresAt
-    );
-    if (hasActiveSession) {
-      const directUser = db.users.find(u => u.id === directId);
-      if (directUser && !directUser.isDeleted && !directUser.isBlocked) {
-        return directUser;
-      }
-    }
   }
 
   return null;
@@ -409,7 +379,7 @@ async function startServer() {
     res.json({ success: true, user: safeUser });
   });
 
-  // Real backend logout: invalidates session and clears cookie
+  // Real backend logout: invalidates only the specific session
   app.post('/api/auth/logout', (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     let token = '';
@@ -418,15 +388,11 @@ async function startServer() {
       token = authHeader.substring(7).trim();
     }
     if (!token) token = (req.headers['x-session-token'] as string) || '';
-    if (!token && req.headers.cookie) {
-      const match = req.headers.cookie.match(/findit_session=([^;]+)/);
-      if (match) token = match[1].trim();
-    }
     if (!token && req.body && req.body.token) token = req.body.token;
     
-    const userId = (req.body && req.body.userId) || (req.headers['x-user-id'] as string);
-
-    invalidateSession(token, userId);
+    if (token) {
+      invalidateSession(token);
+    }
     res.clearCookie('findit_session', { path: '/' });
     res.json({ success: true, message: 'Logged out successfully.' });
   });
@@ -746,7 +712,7 @@ async function startServer() {
     }
 
     const sessionToken = createSession(student);
-    res.cookie('findit_session', sessionToken, { httpOnly: false, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.clearCookie('findit_session', { path: '/' });
     const { password: _, ...safeUser } = student;
     res.json({ success: true, token: sessionToken, user: safeUser });
   });
@@ -867,7 +833,7 @@ async function startServer() {
     }
 
     const sessionToken = createSession(staff);
-    res.cookie('findit_session', sessionToken, { httpOnly: false, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.clearCookie('findit_session', { path: '/' });
     const { password: _, ...safeUser } = staff;
     res.json({ success: true, token: sessionToken, user: safeUser });
   });
@@ -911,7 +877,7 @@ async function startServer() {
     }
 
     const sessionToken = createSession(admin);
-    res.cookie('findit_session', sessionToken, { httpOnly: false, sameSite: 'lax', path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 });
+    res.clearCookie('findit_session', { path: '/' });
     const { password: _, ...safeUser } = admin;
     res.json({ success: true, token: sessionToken, user: safeUser });
   });
@@ -963,10 +929,9 @@ async function startServer() {
     const viewQuery = (req.query.view as string || '').toLowerCase();
     const activeOnly = req.query.activeOnly === 'true';
 
-    // Verify if requester is an actual authenticated admin
+    // Verify if requester is an actual authenticated admin from their session
     const authUser = getAuthenticatedUser(req);
-    const isAdmin = (authUser && authUser.role === 'admin') || 
-      (adminId ? db.users.some(u => (u.id === adminId || u.email === adminId) && u.role === 'admin') : false);
+    const isAdmin = !!(authUser && authUser.role === 'admin');
 
     let result = db.items;
 
@@ -993,10 +958,8 @@ async function startServer() {
 
   app.get('/api/items/:id', (req: Request, res: Response) => {
     const { id } = req.params;
-    const adminId = (req.query.adminId as string) || (req.headers['x-admin-id'] as string) || (req.headers['x-user-id'] as string);
     const authUser = getAuthenticatedUser(req);
-    const isAdmin = (authUser && authUser.role === 'admin') || 
-      (adminId ? db.users.some(u => (u.id === adminId || u.email === adminId) && u.role === 'admin') : false);
+    const isAdmin = !!(authUser && authUser.role === 'admin');
 
     const item = db.items.find(i => i.id === id);
     if (!item) {
@@ -1081,7 +1044,7 @@ async function startServer() {
     const identifier = adminId || userId || (req.headers['x-admin-id'] as string) || (req.headers['x-user-id'] as string);
 
     // Authenticate Admin or Staff
-    const reviewer = authUser || db.users.find(u => (u.id === identifier || u.email === identifier) && (u.role === 'admin' || u.role === 'staff'));
+    const reviewer = authUser || (identifier ? db.users.find(u => (u.id === identifier || u.email === identifier) && (u.role === 'admin' || u.role === 'staff')) : null);
     if (!reviewer || (reviewer.role !== 'admin' && reviewer.role !== 'staff')) {
       res.status(403).json({ success: false, error: 'Unauthorized. Only Staff or Campus Administrators can verify reports.' });
       return;
@@ -1122,7 +1085,7 @@ async function startServer() {
     const identifier = adminId || userId || (req.headers['x-admin-id'] as string) || (req.headers['x-user-id'] as string);
 
     // Authenticate Admin or Staff
-    const reviewer = authUser || db.users.find(u => (u.id === identifier || u.email === identifier) && (u.role === 'admin' || u.role === 'staff'));
+    const reviewer = authUser || (identifier ? db.users.find(u => (u.id === identifier || u.email === identifier) && (u.role === 'admin' || u.role === 'staff')) : null);
     if (!reviewer || (reviewer.role !== 'admin' && reviewer.role !== 'staff')) {
       res.status(403).json({ success: false, error: 'Unauthorized. Only Staff or Campus Administrators can reject reports.' });
       return;
@@ -1309,8 +1272,9 @@ async function startServer() {
     const { id } = req.params;
     const adminId = req.body?.adminId || (req.query?.adminId as string) || (req.headers['x-admin-id'] as string) || (req.headers['x-user-id'] as string);
 
-    // SECURITY: Verify that the requester is an actual authenticated ADMIN in the database
-    const adminUser = db.users.find(u => (u.id === adminId || u.email === adminId) && u.role === 'admin');
+    // SECURITY: Verify that the requester is an actual authenticated ADMIN from session or database
+    const authUser = getAuthenticatedUser(req);
+    const adminUser = (authUser && authUser.role === 'admin') ? authUser : (adminId ? db.users.find(u => (u.id === adminId || u.email === adminId) && u.role === 'admin') : null);
     if (!adminUser) {
       res.status(403).json({ 
         success: false, 

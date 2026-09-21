@@ -141,10 +141,51 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Persistent session keys — backend database is the single source of truth for all entities
+// Tab-scoped session storage keys — guarantees complete isolation between browser tabs and windows
 const STORAGE_KEYS = {
-  CURRENT_USER_ID: 'iyc_current_user_v4',
-  SESSION_TOKEN: 'iyc_session_token_v4'
+  CURRENT_USER_ID: 'findit_current_user_tab_v1',
+  SESSION_TOKEN: 'findit_session_token_tab_v1'
+};
+
+const getStoredSessionToken = (): string => {
+  try {
+    return sessionStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
+  } catch {
+    return '';
+  }
+};
+
+const getStoredUserId = (): string => {
+  try {
+    return sessionStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID) || '';
+  } catch {
+    return '';
+  }
+};
+
+const setStoredSession = (userId: string, token?: string) => {
+  try {
+    sessionStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, userId);
+    if (token) {
+      sessionStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, token);
+    }
+    // Clean up any legacy localStorage keys to ensure complete tab isolation
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+    localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+    localStorage.removeItem('iyc_current_user_v4');
+    localStorage.removeItem('iyc_session_token_v4');
+  } catch {}
+};
+
+const clearStoredSession = () => {
+  try {
+    sessionStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+    sessionStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+    localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+    localStorage.removeItem('iyc_current_user_v4');
+    localStorage.removeItem('iyc_session_token_v4');
+  } catch {}
 };
 
 const DEFAULT_FILTERS: BrowseFilters = {
@@ -176,7 +217,7 @@ async function parseJsonSafely<T>(response: Response | null, fallback: T): Promi
 }
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Purge any stale client-side localStorage caches to guarantee backend single source of truth
+  // Purge any stale client-side localStorage caches to guarantee tab isolation
   useEffect(() => {
     try {
       const staleKeys = [
@@ -186,7 +227,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         'iyc_messages_v2', 'iyc_messages_v4',
         'iyc_claims_v2', 'iyc_claims_v4',
         'iyc_activities_v4',
-        'iyc_moderation_v4'
+        'iyc_moderation_v4',
+        'iyc_current_user_v4',
+        'iyc_session_token_v4',
+        STORAGE_KEYS.CURRENT_USER_ID,
+        STORAGE_KEYS.SESSION_TOKEN
       ];
       staleKeys.forEach(k => localStorage.removeItem(k));
     } catch {
@@ -250,14 +295,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Persist only user session token/ID to localStorage for seamless authentication
+  // Persist user session to tab-scoped sessionStorage
   useEffect(() => {
     if (isLoggingOutRef.current) return;
     try {
       if (currentUser) {
-        localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, currentUser.id);
+        sessionStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, currentUser.id);
       } else {
-        localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+        sessionStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
       }
     } catch (e) {
       console.error('Session write error', e);
@@ -270,19 +315,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const activeUser = (options?.forceLoggedOut || isLoggingOutRef.current) ? null : currentUserRef.current;
       const isAdmin = activeUser?.role === 'admin';
       const itemsUrl = isAdmin && activeUser
-        ? `/api/items?adminId=${encodeURIComponent(activeUser.id)}&includeDeleted=true`
+        ? `/api/items?includeDeleted=true`
         : '/api/items';
 
-      const reqHeaders = { 'Accept': 'application/json' };
+      const token = (options?.forceLoggedOut || isLoggingOutRef.current) ? '' : getStoredSessionToken();
+      const reqHeaders: Record<string, string> = { 'Accept': 'application/json' };
+      if (token) {
+        reqHeaders['Authorization'] = `Bearer ${token}`;
+        reqHeaders['x-session-token'] = token;
+      }
 
       const [itemsRes, usersRes, claimsRes, msgsRes, actsRes, modsRes, locsRes] = await Promise.all([
-        fetch(itemsUrl, { headers: reqHeaders, credentials: 'include' }).catch(() => null),
-        fetch(`/api/users?_t=${Date.now()}`, { headers: reqHeaders, credentials: 'include' }).catch(() => null),
-        fetch(`/api/claims?_t=${Date.now()}`, { headers: reqHeaders, credentials: 'include' }).catch(() => null),
-        fetch('/api/messages', { headers: reqHeaders, credentials: 'include' }).catch(() => null),
-        fetch('/api/activities', { headers: reqHeaders, credentials: 'include' }).catch(() => null),
-        fetch('/api/moderation', { headers: reqHeaders, credentials: 'include' }).catch(() => null),
-        fetch('/api/locations', { headers: reqHeaders, credentials: 'include' }).catch(() => null)
+        fetch(itemsUrl, { headers: reqHeaders }).catch(() => null),
+        fetch(`/api/users?_t=${Date.now()}`, { headers: reqHeaders }).catch(() => null),
+        fetch(`/api/claims?_t=${Date.now()}`, { headers: reqHeaders }).catch(() => null),
+        fetch('/api/messages', { headers: reqHeaders }).catch(() => null),
+        fetch('/api/activities', { headers: reqHeaders }).catch(() => null),
+        fetch('/api/moderation', { headers: reqHeaders }).catch(() => null),
+        fetch('/api/locations', { headers: reqHeaders }).catch(() => null)
       ]);
 
       const [itemsData, usersData, claimsData, msgsData, actsData, modsData, locsData] = await Promise.all([
@@ -310,8 +360,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (!updatedCurrentUser || updatedCurrentUser.isDeleted || updatedCurrentUser.isBlocked) {
               currentUserRef.current = null;
               setCurrentUser(null);
-              localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
-              localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+              clearStoredSession();
               setCurrentPage('home');
             } else {
               currentUserRef.current = updatedCurrentUser;
@@ -356,26 +405,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const abortController = new AbortController();
       authAbortControllerRef.current = abortController;
 
-      const savedUserId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
-      const savedToken = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN);
+      const savedToken = getStoredSessionToken();
 
-      if (savedUserId || savedToken) {
+      if (savedToken) {
         try {
           const headers: Record<string, string> = { 
             'Accept': 'application/json',
-            'Cache-Control': 'no-cache'
+            'Cache-Control': 'no-cache',
+            'Authorization': `Bearer ${savedToken}`,
+            'x-session-token': savedToken
           };
-          if (savedToken) {
-            headers['Authorization'] = `Bearer ${savedToken}`;
-            headers['x-session-token'] = savedToken;
-          }
-          if (savedUserId) {
-            headers['x-user-id'] = savedUserId;
-          }
 
-          const res = await fetch(`/api/auth/me${savedUserId ? `?userId=${encodeURIComponent(savedUserId)}` : ''}`, {
+          const res = await fetch('/api/auth/me', {
             headers,
-            credentials: 'include',
             signal: abortController.signal
           });
 
@@ -384,8 +426,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
 
           if (!res.ok) {
-            localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
-            localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+            clearStoredSession();
             currentUserRef.current = null;
             setCurrentUser(null);
           } else {
@@ -397,8 +438,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               currentUserRef.current = data.user;
               setCurrentUser(data.user);
             } else {
-              localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
-              localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+              clearStoredSession();
               currentUserRef.current = null;
               setCurrentUser(null);
             }
@@ -408,6 +448,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             console.warn('Initial session restore network warning:', err);
           }
         }
+      } else {
+        // No saved token in this tab's sessionStorage: cleanly unauthenticated
+        currentUserRef.current = null;
+        setCurrentUser(null);
       }
 
       if (isMounted && !isLoggingOutRef.current) {
@@ -546,9 +590,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setItems(prev => [newItem, ...prev]);
 
     // Persist new report to backend database
+    const sessionToken = getStoredSessionToken();
+    const itemHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (sessionToken) {
+      itemHeaders['Authorization'] = `Bearer ${sessionToken}`;
+      itemHeaders['x-session-token'] = sessionToken;
+    }
+
     fetch('/api/items', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: itemHeaders,
       body: JSON.stringify(newItem)
     }).catch(err => console.error('Failed to sync new item to backend', err));
 
@@ -569,9 +620,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateItem = async (updated: Item) => {
     try {
+      const sessionToken = getStoredSessionToken();
+      const updateHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (sessionToken) {
+        updateHeaders['Authorization'] = `Bearer ${sessionToken}`;
+        updateHeaders['x-session-token'] = sessionToken;
+      }
       const res = await fetch(`/api/items/${updated.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: updateHeaders,
         body: JSON.stringify(updated)
       });
       if (res.ok) {
@@ -603,12 +660,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     try {
-      const sessionToken = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
+      const sessionToken = getStoredSessionToken();
       const res = await fetch(`/api/items/${itemId}/delete`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
           'Authorization': sessionToken ? `Bearer ${sessionToken}` : '',
+          'x-session-token': sessionToken,
           'x-user-id': currentUser.id,
           'x-admin-id': isAdmin ? currentUser.id : ''
         },
@@ -664,9 +722,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     try {
+      const sessionToken = getStoredSessionToken();
       const res = await fetch(`/api/items/${itemId}/restore`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Accept': 'application/json',
+          'Authorization': sessionToken ? `Bearer ${sessionToken}` : '',
+          'x-session-token': sessionToken
+        },
         body: JSON.stringify({ adminId: currentUser.id })
       });
       const data = await res.json().catch(() => ({ success: false, error: 'Invalid server response' }));
@@ -751,13 +815,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     
     try {
-      const sessionToken = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
+      const sessionToken = getStoredSessionToken();
       const res = await fetch(`/api/items/${itemId}/verify`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json', 
           'Accept': 'application/json',
           'Authorization': sessionToken ? `Bearer ${sessionToken}` : '',
+          'x-session-token': sessionToken,
           'x-user-id': currentUser.id,
           'x-admin-id': currentUser.id
         },
@@ -793,10 +858,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
 
+    const sessionToken = getStoredSessionToken();
     fetch(`/api/items/${itemId}/reject`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify({ reason: finalReason, verifiedBy: currentUser?.name })
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Accept': 'application/json',
+        'Authorization': sessionToken ? `Bearer ${sessionToken}` : '',
+        'x-session-token': sessionToken
+      },
+      body: JSON.stringify({ 
+        reason: finalReason, 
+        verifiedBy: currentUser?.name,
+        adminId: currentUser?.id,
+        userId: currentUser?.id 
+      })
     })
     .then(() => refreshAllData())
     .catch(err => console.error('Failed to sync rejection to backend:', err));
@@ -880,9 +956,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     try {
+      const sessionToken = getStoredSessionToken();
       const res = await fetch('/api/claims', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Accept': 'application/json',
+          'Authorization': sessionToken ? `Bearer ${sessionToken}` : '',
+          'x-session-token': sessionToken
+        },
         body: JSON.stringify(newClaim)
       });
       const data = await res.json().catch(() => ({ success: false }));
@@ -907,9 +989,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const finalNotes = handoverNotes || 'Handover verified and completed. Student ID confirmed.';
 
     try {
+      const sessionToken = getStoredSessionToken();
       const res = await fetch(`/api/claims/${claimId}/approve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Accept': 'application/json',
+          'Authorization': sessionToken ? `Bearer ${sessionToken}` : '',
+          'x-session-token': sessionToken
+        },
         body: JSON.stringify({
           reviewerId: currentUser?.id,
           reviewerName: currentUser?.name || 'Staff',
@@ -936,9 +1024,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const finalReason = rejectionReason || 'Proof details did not match physical item inspection.';
 
     try {
+      const sessionToken = getStoredSessionToken();
       const res = await fetch(`/api/claims/${claimId}/reject`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json', 
+          'Accept': 'application/json',
+          'Authorization': sessionToken ? `Bearer ${sessionToken}` : '',
+          'x-session-token': sessionToken
+        },
         body: JSON.stringify({
           reviewerId: currentUser?.id,
           reviewerName: currentUser?.name || 'Staff',
@@ -1014,12 +1108,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         return [...prev, authenticatedUser];
       });
-      try {
-        localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, authenticatedUser.id);
-        if (sessionToken) {
-          localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, sessionToken);
-        }
-      } catch {}
+      setStoredSession(authenticatedUser.id, sessionToken);
       if (pendingPostAuthAction) {
         pendingPostAuthAction();
         setPendingPostAuthAction(null);
@@ -1043,12 +1132,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setCurrentUser(user);
-    try {
-      localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, user.id);
-      if (sessionToken) {
-        localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, sessionToken);
-      }
-    } catch {}
+    setStoredSession(user.id, sessionToken);
     if (pendingPostAuthAction) {
       pendingPostAuthAction();
       setPendingPostAuthAction(null);
@@ -1069,12 +1153,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         return [...prev, authenticatedUser];
       });
-      try {
-        localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, authenticatedUser.id);
-        if (sessionToken) {
-          localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, sessionToken);
-        }
-      } catch {}
+      setStoredSession(authenticatedUser.id, sessionToken);
       if (pendingPostAuthAction) {
         pendingPostAuthAction();
         setPendingPostAuthAction(null);
@@ -1104,12 +1183,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setCurrentUser(staffUser);
-    try {
-      localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, staffUser.id);
-      if (sessionToken) {
-        localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, sessionToken);
-      }
-    } catch {}
+    setStoredSession(staffUser.id, sessionToken);
     if (pendingPostAuthAction) {
       pendingPostAuthAction();
       setPendingPostAuthAction(null);
@@ -1130,12 +1204,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         return [...prev, authenticatedUser];
       });
-      try {
-        localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, authenticatedUser.id);
-        if (sessionToken) {
-          localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, sessionToken);
-        }
-      } catch {}
+      setStoredSession(authenticatedUser.id, sessionToken);
       if (pendingPostAuthAction) {
         pendingPostAuthAction();
         setPendingPostAuthAction(null);
@@ -1162,12 +1231,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setCurrentUser(adminUser);
-    try {
-      localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, adminUser.id);
-      if (sessionToken) {
-        localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, sessionToken);
-      }
-    } catch {}
+    setStoredSession(adminUser.id, sessionToken);
     if (pendingPostAuthAction) {
       pendingPostAuthAction();
       setPendingPostAuthAction(null);
@@ -1340,14 +1404,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setPendingPostAuthAction(null);
 
     // 4. Retrieve credentials for backend invalidation before clearing storage
-    const token = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN);
-    const userId = currentUserRef.current?.id || localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
+    const token = getStoredSessionToken();
+    const userId = currentUserRef.current?.id || getStoredUserId();
 
     // 5. Call backend /api/auth/logout to invalidate session on the server
     try {
       await fetch('/api/auth/logout', {
         method: 'POST',
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -1361,12 +1424,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('Backend logout request warning:', err);
     }
 
-    // 6. Clear local storage tokens and caches
-    try {
-      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
-      localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
-      sessionStorage.clear();
-    } catch {}
+    // 6. Clear tab storage tokens and caches
+    clearStoredSession();
 
     // 7. Atomically clear current authenticated user and authenticated role
     currentUserRef.current = null;
@@ -1433,7 +1492,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const blockUser = async (userId: string): Promise<boolean> => {
     try {
-      const token = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
+      const token = getStoredSessionToken();
       const adminId = currentUser?.id || '';
       const res = await fetch(`/api/admin/users/${userId}/block`, { 
         method: 'POST',
@@ -1455,7 +1514,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const unblockUser = async (userId: string): Promise<boolean> => {
     try {
-      const token = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
+      const token = getStoredSessionToken();
       const adminId = currentUser?.id || '';
       const res = await fetch(`/api/admin/users/${userId}/unblock`, { 
         method: 'POST',
@@ -1477,7 +1536,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const restrictUser = async (userId: string): Promise<boolean> => {
     try {
-      const token = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
+      const token = getStoredSessionToken();
       const adminId = currentUser?.id || '';
       const res = await fetch(`/api/admin/users/${userId}/restrict`, { 
         method: 'POST',
@@ -1499,7 +1558,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const unrestrictUser = async (userId: string): Promise<boolean> => {
     try {
-      const token = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
+      const token = getStoredSessionToken();
       const adminId = currentUser?.id || '';
       const res = await fetch(`/api/admin/users/${userId}/unrestrict`, { 
         method: 'POST',
@@ -1521,7 +1580,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteUser = async (userId: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      const token = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || '';
+      const token = getStoredSessionToken();
       const adminId = currentUser?.id || '';
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -1537,7 +1596,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, { 
         method: 'DELETE',
-        credentials: 'include',
         headers
       });
       const data = await res.json().catch(() => null);
@@ -1552,7 +1610,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const resetToDefaultData = () => {
-    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER_ID);
+    clearStoredSession();
     fetch('/api/reset', {
       method: 'POST'
     })
