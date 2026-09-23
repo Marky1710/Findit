@@ -65,7 +65,7 @@ export const Footer: React.FC = () => {
             <ul className="space-y-1.5 text-slate-400">
               <li className="flex justify-between">
                 <span>Category Match:</span>
-                <span className="text-slate-200 font-mono font-bold">30 Pts</span>
+                <span className="text-slate-200 font-mono font-bold">25 Pts</span>
               </li>
               <li className="flex justify-between">
                 <span>Location Match:</span>
@@ -73,19 +73,19 @@ export const Footer: React.FC = () => {
               </li>
               <li className="flex justify-between">
                 <span>Date Proximity:</span>
-                <span className="text-slate-200 font-mono font-bold">20 Pts</span>
-              </li>
-              <li className="flex justify-between">
-                <span>Color Similarity:</span>
                 <span className="text-slate-200 font-mono font-bold">15 Pts</span>
               </li>
               <li className="flex justify-between">
-                <span>Keyword / NLP Overlap:</span>
+                <span>Color Similarity:</span>
                 <span className="text-slate-200 font-mono font-bold">10 Pts</span>
+              </li>
+              <li className="flex justify-between">
+                <span>Keyword / NLP Overlap:</span>
+                <span className="text-slate-200 font-mono font-bold">25 Pts</span>
               </li>
               <li className="pt-2 border-t border-slate-800 flex justify-between font-bold text-emerald-400">
                 <span>Threshold for Match:</span>
-                <span>&gt;= 70%</span>
+                <span>&gt;= 60%</span>
               </li>
             </ul>
           </div>

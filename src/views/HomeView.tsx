@@ -197,7 +197,7 @@ export const HomeView: React.FC = () => {
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-6 pt-6 border-t border-blue-200/60">
             <div className="bg-white rounded-2xl p-3.5 border border-blue-100 shadow-xs text-center">
               <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Category</div>
-              <div className="text-2xl font-black text-blue-600 font-mono my-1">30 Pts</div>
+              <div className="text-2xl font-black text-blue-600 font-mono my-1">25 Pts</div>
               <div className="text-[11px] text-slate-500">Exact or related device classification</div>
             </div>
             <div className="bg-white rounded-2xl p-3.5 border border-blue-100 shadow-xs text-center">
@@ -207,24 +207,24 @@ export const HomeView: React.FC = () => {
             </div>
             <div className="bg-white rounded-2xl p-3.5 border border-blue-100 shadow-xs text-center">
               <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Date</div>
-              <div className="text-2xl font-black text-emerald-600 font-mono my-1">20 Pts</div>
+              <div className="text-2xl font-black text-emerald-600 font-mono my-1">15 Pts</div>
               <div className="text-[11px] text-slate-500">Time window delta (0 to 14 days)</div>
             </div>
             <div className="bg-white rounded-2xl p-3.5 border border-blue-100 shadow-xs text-center">
               <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Color</div>
-              <div className="text-2xl font-black text-amber-600 font-mono my-1">15 Pts</div>
+              <div className="text-2xl font-black text-amber-600 font-mono my-1">10 Pts</div>
               <div className="text-[11px] text-slate-500">Visual hue, finish &amp; casing</div>
             </div>
             <div className="bg-white rounded-2xl p-3.5 border border-blue-100 shadow-xs text-center col-span-2 sm:col-span-1">
               <div className="text-xs font-bold text-slate-500 uppercase tracking-wider">Keywords</div>
-              <div className="text-2xl font-black text-purple-600 font-mono my-1">10 Pts</div>
+              <div className="text-2xl font-black text-purple-600 font-mono my-1">25 Pts</div>
               <div className="text-[11px] text-slate-500">Brand, marks &amp; description NLP</div>
             </div>
           </div>
 
           <div className="mt-4 flex items-center justify-between text-xs bg-white/70 rounded-xl px-4 py-2.5 border border-blue-100">
             <span className="font-semibold text-slate-700">
-              Threshold Rule: When <code className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-mono">Score &gt;= 70%</code>, the system flags a <strong>"Possible Match"</strong> and alerts both parties!
+              Threshold Rule: When <code className="bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-mono">Score &gt;= 60%</code>, the system flags a <strong>"Possible Match"</strong> and alerts both parties!
             </span>
             <span className="hidden sm:inline text-emerald-700 font-bold">100 Point Max Total</span>
           </div>
